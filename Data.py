@@ -12,7 +12,7 @@ number_of_cities = 0
 number_of_drones = 2
 truck_speed = 0.5
 drone_speed = 1
-drone_capacity = 8
+drone_capacity = 4
 drone_limit_time = 90
 city_demand = []
 release_date = []
@@ -225,6 +225,5 @@ def read_data_random(path):
     standard_deviation = calculate_standard_deviation(release_date)
     # print(standard_deviation)
     return data
-
 
 # read_data_random(file_path)
