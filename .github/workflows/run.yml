@@ -13,10 +13,10 @@ jobs:
       matrix:
         #center: ["border", "center", "outside"]
         center: ["outside"]
-        data_set : ["U_40_0.5_Num_1.txt", "U_40_0.5_Num_2.txt", "U_40_0.5_Num_3.txt", "U_40_0.5_Num_4.txt", "U_40_0.5_Num_5.txt",
-                "U_40_0.5_Num_6.txt", "U_40_0.5_Num_7.txt", "U_40_0.5_Num_8.txt", "U_40_0.5_Num_9.txt", "U_40_0.5_Num_10.txt",
-                "U_40_1_Num_5.txt", "U_40_1_Num_6.txt", "U_40_1_Num_7.txt", "U_40_1_Num_8.txt", "U_40_1_Num_9.txt", "U_40_1_Num_10.txt",
-                "U_40_1.5_Num_5.txt", "U_40_1.5_Num_6.txt","U_40_1.5_Num_4.txt"
+        data_set : ["U_50_0.5_Num_1.txt", "U_50_0.5_Num_2.txt", "U_50_0.5_Num_3.txt", "U_50_0.5_Num_4.txt", "U_50_0.5_Num_5.txt",
+                "U_50_0.5_Num_6.txt", "U_50_0.5_Num_7.txt", "U_50_0.5_Num_8.txt", "U_50_0.5_Num_9.txt", "U_50_0.5_Num_10.txt",
+                "U_50_1.0_Num_1.txt", "U_50_1.0_Num_10.txt", "U_50_1.0_Num_4.txt", 
+                "U_50_1.5_Num_3.txt", "U_50_1.5_Num_5.txt","U_50_1.5_Num_9.txt"
                  ]
         # data_set: ["U_50_0.5_Num_1.txt", "U_50_0.5_Num_2.txt", "U_50_0.5_Num_3.txt", "U_50_0.5_Num_4.txt", "U_50_0.5_Num_5.txt", 
         #         "U_50_1.0_Num_1.txt", "U_50_1.0_Num_2.txt", "U_50_1.0_Num_3.txt", "U_50_1.0_Num_4.txt", "U_50_1.0_Num_5.txt", 
