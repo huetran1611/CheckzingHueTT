@@ -472,7 +472,7 @@ for txt_file in txt_files:
         # log_file_path = os.path.join(log_folder, log)
         # log_file = open(log_file_path, 'w')
         # sys.stdout = log_file
-        Data.read_data(txt_file)
+        Data.read_data_random(txt_file)
         result = []
         run_time = []
         avg = 0
