@@ -445,7 +445,7 @@ def Tabu_search_for_CVRP(CC):
     return best_fitness, best_sol, data_to_write
 
 # Thư mục chứa các file .txt
-folder_path = "test_data/Smith/TSPrd(time)/Solomon/"+str(number_of_cities)
+folder_path = "test_data/data_demand_random/"+str(number_of_cities)
 # folder_path = "test_data/Smith/TSPrd(time)/Solomon/"+str(number_of_cities)
 # folder_path = "test_data\\Smith\\TSPrd(time)\\Solomon\\50\\0_5TSP_50"
 # folder_path = "test_data\\Smith\\TSPrd(time)\\Solomon\\15"
