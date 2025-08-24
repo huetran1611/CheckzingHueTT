@@ -11,11 +11,6 @@ C_ratio = Data.C_ratio
 
 def Neighborghood_change_drone_route(solution):
     neighborhood = []
-    '''temp = []
-    temp.append(solution)
-    fit, tt = Function.fitness(solution)
-    temp.append([fit, tt])
-    neighborhood.append(temp)'''
     
     package = copy.deepcopy(solution[1])
     for i in range(Data.number_of_trucks):
@@ -23,13 +18,14 @@ def Neighborghood_change_drone_route(solution):
         for j in range(len(solution[0][i][0][1])):
             pack.append(solution[0][i][0][1][j])
         package.insert(0,[[0,pack]])
+            
     # Sắp xếp lại theo thứ tự drone
     for i in range(len(package)):
         for l in range(len(package[i])):
             for j in range(len(package[i][l][1])):
                 for k in range(j+1,len(package[i][l][1])):
                     if(Data.release_date[package[i][l][1][j]] < Data.release_date[package[i][l][1][k]]):
-                        temp = package[i][l][1][j];
+                        temp = package[i][l][1][j]
                         package[i][l][1][j] = package[i][l][1][k]
                         package[i][l][1][k] = temp
     for i in range(len(package)):
@@ -41,8 +37,10 @@ def Neighborghood_change_drone_route(solution):
                 IndexOfReceiveCityInTruck = -1
                 for l in range(k):
                     ChangePackage = package[i][j][1][l]
-                    ChangePackages.append(ChangePackage) # Các gói hàng sẽ chuyển
+                    ChangePackages.append(ChangePackage)             # Các gói hàng sẽ chuyển
+                    
                     # Xoá ở New Solution
+                    
                     if(package[i][j][0] != 0):
                         NewSolution[1][i-Data.number_of_trucks][j][1].remove(ChangePackage)
                         for ii in range(len(NewSolution[0][ChangeInTruck])):
@@ -393,24 +391,20 @@ def Neighborhood_group_trip(solution):
                                 print(new_solution[0][iii])
                             print(new_solution[1])
                             print("-------------------------------")'''
-                        temp = []
-                        temp.append(new_solution)
-                        fit, dt, tt = Function.fitness(new_solution)
-                        temp.append([fit, dt, tt])
-                        #print(fit)
-                        temp.append([i,j,k])
-                        neighborhood.append(temp)
-        '''if len(neighborhood) == 0:
-        first = [solution]
-        fit, tt = Function.fitness(solution)
-        first.append([fit, tt])
-        first.append([0, 0, 0])
-        neighborhood.append(first)'''
+                        if Function.check_if_drone_time_out_of_limit(new_solution):
+                            temp = []
+                            temp.append(new_solution)
+                            fit, dt, tt = Function.fitness(new_solution)
+                            temp.append([fit, dt, tt])
+                            #print(fit)
+                            temp.append([i,j,k])
+                            neighborhood.append(temp)
     return neighborhood
 
 def choose_what_to_group(solution, index_drone_trip, index_in_trip, find_in_forward):
     chosen_city = solution[1][index_drone_trip][index_in_trip][0]
     index_truck = Function.index_truck_of_cities[chosen_city] 
+    start1, end1 = Function.determine_start_end(solution, index_truck, chosen_city)
     index_chosen_city_in_truck = -1
     for i in range(len(solution[0][index_truck])):
         city = solution[0][index_truck][i][0]
@@ -427,18 +421,23 @@ def choose_what_to_group(solution, index_drone_trip, index_in_trip, find_in_forw
         stop1368 = False
         for i in reversed(range(index_drone_trip)):
             for j in range(len(solution[1][i])):
+                city1 = solution[1][i][j][0]
+                index_truck1 = Function.index_truck_of_cities[city1]
                 if Function.index_truck_of_cities[solution[1][i][j][0]] == index_truck:
-                    index_drone_trip_choose_to_group = i
-                    index_in_trip_choose_to_group = j
-                    stop1368 = True
-                    break
+                    start2, end2 = Function.determine_start_end(solution, index_truck1, city1)
+                    if start2 == start1:
+                        index_drone_trip_choose_to_group = i
+                        index_in_trip_choose_to_group = j
+                        stop1368 = True
+                        break
             if stop1368:
                 break
             
         if not stop1368:
-            pre_potential_package = copy.deepcopy(solution[0][index_truck][0][1])
+            pre_potential_package = copy.deepcopy(solution[0][index_truck][start1][1])
             potential_package = []
-            for i in range(len(solution[0][index_truck])):
+            # for i in range(len(solution[0][index_truck])):
+            for i in range(start1+1, end1):
                 city = solution[0][index_truck][i][0]
                 if city in pre_potential_package:
                     potential_package.append(city)
@@ -449,7 +448,8 @@ def choose_what_to_group(solution, index_drone_trip, index_in_trip, find_in_forw
                 
                 continue744 = False
                 
-                for ii in range(index_chosen_city_in_truck):
+                # Kiểm tra xem gói hàng muốn gộp có hợp lệ vị trí giao hàng tại điểm gộp mới không
+                for ii in range(start1+1, index_chosen_city_in_truck):
                     if solution[0][index_truck][ii][0] in potential_package:
                         continue744 = True
                         break
@@ -459,7 +459,7 @@ def choose_what_to_group(solution, index_drone_trip, index_in_trip, find_in_forw
                 
                 if demand_package + Data.city_demand[potential_package[i]] <= Data.drone_capacity:
                     demand_package += Data.city_demand[potential_package[i]]
-                    solution[0][index_truck][0][1].remove(potential_package[i])
+                    solution[0][index_truck][start1][1].remove(potential_package[i])
                     solution[0][index_truck][index_chosen_city_in_truck][1] += [potential_package[i]]
                     solution[1][index_drone_trip][index_in_trip][1] += [potential_package[i]]
         
@@ -484,11 +484,15 @@ def choose_what_to_group(solution, index_drone_trip, index_in_trip, find_in_forw
         stop761 = False
         for i in range(index_drone_trip + 1, len(solution[1])):
             for j in range(len(solution[1][i])):
+                city1 = solution[1][i][j][0]
+                index_truck1 = Function.index_truck_of_cities[city1]
                 if Function.index_truck_of_cities[solution[1][i][j][0]] == index_truck:
-                    index_drone_trip_choose_to_group = i
-                    index_in_trip_choose_to_group = j
-                    stop761 = True
-                    break
+                    start2, end2 = Function.determine_start_end(solution, index_truck1, city1)
+                    if start2 == start1:
+                        index_drone_trip_choose_to_group = i
+                        index_in_trip_choose_to_group = j
+                        stop761 = True
+                        break
             if stop761:
                 break
         if index_drone_trip_choose_to_group != -1:
@@ -522,7 +526,7 @@ def Neighborghood_change_drone_route_max_pro_plus(solution):
                         package[i][j][1].append(city)
                 if remained_pack == 0:
                     break
-
+    coutt = 0
     for i in range(len(package)):
         for j in range(len(package[i])):
             initial_demand_package = Function.sum_weight(package[i][j][1])
@@ -536,7 +540,7 @@ def Neighborghood_change_drone_route_max_pro_plus(solution):
                     #print("Total: ", Total_case[ii])
                     for l in range(len(ChangePackages)):
                         # print("hehe: ", ChangePackages)
-                        #print("-----------------------------", ChangePackages)
+                        # print("-----------------------------", ChangePackages)
                         ChangePackage = ChangePackages[l]
                         #ChangePackages.append(ChangePackage)
                         #print(ChangePackage)
@@ -545,7 +549,7 @@ def Neighborghood_change_drone_route_max_pro_plus(solution):
                         if package[i][j][0] != 0:
                             NewSolution[1][i-Data.number_of_trucks][j][1].remove(ChangePackage)
                             for ii in range(len(NewSolution[0][ChangeInTruck])):
-                                if(ChangePackage in NewSolution[0][ChangeInTruck][ii][1]):
+                                if ChangePackage in NewSolution[0][ChangeInTruck][ii][1]:
                                     IndexOfReceiveCityInTruck = ii
                                     NewSolution[0][ChangeInTruck][ii][1].remove(ChangePackage)
                                     break
@@ -570,8 +574,10 @@ def Neighborghood_change_drone_route_max_pro_plus(solution):
                         else:
                             NewSolution = Rearrange_index_trip(NewSolution, i-Data.number_of_trucks, False)
                     stop = False
-                    for l in range(len(NewSolution[0][ChangeInTruck])):
-                        
+                    start_, end_ = Function.determine_start_end(NewSolution, ChangeInTruck, ChangePackages[0])
+                    # for l in range(len(NewSolution[0][ChangeInTruck])):
+                    for l in range(start_, end_):
+                    
                         if l == IndexOfReceiveCityInTruck:
                             continue
 
@@ -596,29 +602,36 @@ def Neighborghood_change_drone_route_max_pro_plus(solution):
                                 New_solution1[0][ChangeInTruck][l][1] = New_solution1[0][ChangeInTruck][l][1] + [ChangePackages[ll]]
                             #Add điểm giao hàng tại drone package
                             if Data.euclid_flight_matrix[0][ReceiveCity] * 2 + Data.unloading_time <= Data.drone_limit_time:
-                                if l != 0:
+                                if ReceiveCity != 0:
                                     index_drone_trip = -1
                                     index_in_trip = -1
                                     New_solution1, index_drone_trip, index_in_trip = Neighborhood.addNewTripInDroneRoute(New_solution1, ChangePackages, ChangeInTruck, l)
                                 
-                                if l > IndexOfReceiveCityInTruck:
-                                    if demand_change_package <= 0.5 * Data.drone_capacity:
-                                        New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, True)
-                                    if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
-                                        if initial_demand_package != demand_change_package:
-                                            if i - Data.number_of_trucks >= 0:
-                                                New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, False)
-                                else:
-                                    if initial_demand_package != demand_change_package:
-                                        if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
-                                            if l != 0:
-                                                New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks + 1, j, True)
-                                            else:
-                                                New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, True)
-                                    if demand_change_package <= 0.5 * Data.drone_capacity:
-                                        if l != 0:
-                                            New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, False)
                                 
+                                # if len(neighborhood) == 72:
+                                #     print("heheh")
+                                #     print(New_solution1[0][0])
+                                #     print(New_solution1[1])
+                                #     print("--next--")
+                                
+                                    if l > IndexOfReceiveCityInTruck: 
+                                        if demand_change_package <= 0.5 * Data.drone_capacity:
+                                            New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, True)
+                                        if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
+                                            if initial_demand_package != demand_change_package:
+                                                if i - Data.number_of_trucks >= 0:
+                                                    New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, False)
+                                    else:
+                                        if initial_demand_package != demand_change_package:
+                                            if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
+                                                if ReceiveCity != 0:
+                                                    New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks + 1, j, True)
+                                                else:
+                                                    New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, True)
+                                        if demand_change_package <= 0.5 * Data.drone_capacity:
+                                            if  ReceiveCity != 0:
+                                                New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, False)
+                                    
                             else:
                                 continue
                         # Trường hợp 2: Điểm giao đến cũng là một điểm nhận hàng
@@ -629,60 +642,79 @@ def Neighborghood_change_drone_route_max_pro_plus(solution):
                                 New_solution1[0][ChangeInTruck][l][1] = New_solution1[0][ChangeInTruck][l][1] + [ChangePackages[ll]]
                             #Add điểm giao hàng tại drone package
                             if_group = True
+                            # print(New_solution1[0][0])
+                            # print(New_solution1[1])
+                            # print("l: ",l)
+                            # print("Change: ", ChangePackages)
+                            # print("--firstt--")
+                            # if len(neighborhood) == 72:
+                            #     print("uhuh")
+                            #     print(New_solution1[0][0])
+                            #     print(New_solution1[1])
+                            #     print("--next--")
                             
-                            if l != 0: 
+                            if  ReceiveCity != 0: 
                                 index_drone_trip = -1
                                 index_in_trip = -1
+                                # if len(neighborhood) == 72:
+                                #     print(New_solution1)
+                                #     print(ChangePackages)
+                                #     print(ChangeInTruck)
+                                #     print(l)
+                                #     print("kkakak")
                                 New_solution1, index_drone_trip, index_in_trip, if_group = Neighborhood.groupTripInDroneRoute(New_solution1, ChangePackages, ChangeInTruck, l)
+
                                 if if_group:
                                     NewSolution = Rearrange_index_trip(NewSolution, index_drone_trip, True)
-                                       
-                            if if_group:    # Gộp thành công
-                                
-                                if l > IndexOfReceiveCityInTruck:
-                                    if Function.sum_weight(New_solution1[1][index_drone_trip][index_in_trip][1]) <= 0.5 * Data.drone_capacity:
-                                        New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, True)
-                                    if initial_demand_package != demand_change_package:
-                                        if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
-                                            if i - Data.number_of_trucks >= 0:
-                                                New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, False)
-                                else:
-                                    if initial_demand_package != demand_change_package:
-                                        if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
-                                            New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, True)
-                                        
-                                    if l != 0:
+                            
+                            
+                            # if len(neighborhood) == 221:
+                            #     print("ehehe")
+                            #     print(New_solution1[0][0])
+                            #     print(New_solution1[1])
+                            #     print("--next--")
+                                 
+                                if if_group:    # Gộp thành công
+                                    
+                                    if l > IndexOfReceiveCityInTruck:
                                         if Function.sum_weight(New_solution1[1][index_drone_trip][index_in_trip][1]) <= 0.5 * Data.drone_capacity:
-                                            New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, False)
-                           
-                            else:           # Gộp thất bại, tạo trip mới riêng
-                                if l > IndexOfReceiveCityInTruck:
-                                    if demand_change_package <= 0.5 * Data.drone_capacity:
-                                        New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, True)
-                                    if i - Data.number_of_trucks >= 0:
+                                            New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, True)
                                         if initial_demand_package != demand_change_package:
                                             if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
-                                                New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, False)
-                                else:
-                                    if initial_demand_package != demand_change_package:
-                                        if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
-                                            New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks + 1, j, True)
-                                    if demand_change_package <= 0.5 * Data.drone_capacity:
-                                        if l != 0:
-                                            New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, False)
-                                    
-                        # for iii in range(Data.number_of_trucks):
-                        #     print(solution[0][iii])
-                        # print(solution[1])
-                        # print("----")    
-                        # for iii in range(Data.number_of_trucks):
-                        #     print(New_solution1[0][iii])
+                                                if i - Data.number_of_trucks >= 0:
+                                                    New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, False)
+                                    else:
+                                        if initial_demand_package != demand_change_package:
+                                            if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
+                                                New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, True)
+                                            
+                                        if ReceiveCity != 0:
+                                            if Function.sum_weight(New_solution1[1][index_drone_trip][index_in_trip][1]) <= 0.5 * Data.drone_capacity:
+                                                New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, False)
+                            
+                                else:           # Gộp thất bại, tạo trip mới riêng
+                                    if l > IndexOfReceiveCityInTruck:
+                                        if demand_change_package <= 0.5 * Data.drone_capacity:
+                                            New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, True)
+                                        if i - Data.number_of_trucks >= 0:
+                                            if initial_demand_package != demand_change_package:
+                                                if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
+                                                    New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks, j, False)
+                                    else:
+                                        if initial_demand_package != demand_change_package:
+                                            if initial_demand_package - demand_change_package <= 0.5 * Data.drone_capacity:
+                                                New_solution1 = choose_what_to_group(New_solution1, i - Data.number_of_trucks + 1, j, True)
+                                        if demand_change_package <= 0.5 * Data.drone_capacity:
+                                            if ReceiveCity != 0:
+                                                New_solution1 = choose_what_to_group(New_solution1, index_drone_trip, index_in_trip, False)
+                                        
+
+                        # if len(neighborhood) == 221:
+                        #     print(New_solution1[0][0])
+                        #     print(New_solution1[1])
+                        # print(New_solution1[0][0])
                         # print(New_solution1[1])
-                        # # print(New_solution1)
-                        # print(Function.cal_truck_time(New_solution1))
-                        # print(len(neighborhood))
                         # print("-------------------------------")
-                        
                         temp = []
                         temp.append(New_solution1)
                         fit, dt, tt = Function.fitness(New_solution1)
@@ -1100,3 +1132,4 @@ def Neighborhood_change_index_trip(solution):
             temp.append(-1)
             neighborhood.append(temp)
     return neighborhood
+ 

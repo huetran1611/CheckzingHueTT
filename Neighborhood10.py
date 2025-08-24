@@ -15,8 +15,8 @@ def Neighborhood_one_otp(solution, truck_time):
     for i in range(len(solution[0])):
         for j in range(1, len(solution[0][i])):
             for k in range(len(solution[0])):
-                for l in range(len(solution[0][k])):
-                    if solution[0][i][j][0] == 0: continue
+                for l in range(1, len(solution[0][k])):
+                    
                     if i == k and (j == l or j == l + 1):
                         continue
                     else:
@@ -212,7 +212,22 @@ def Neighborhood_one_opt_standard(solution):
         for j in range(1, len(solution[0][i])):
             for k in range(len(solution[0])):
                 for l in range(len(solution[0][k])):
-                    if solution[0][i][j][0] == 0: continue
+                    if solution[0][i][j][0] == 0:
+                        continue
+                    if j == len(solution[0][i]) - 1 and solution[0][i][j-1][0] == 0:
+                        continue
+                    if j + 1 < len(solution[0][i]):
+                        if solution[0][i][j-1][0] == 0 and solution[0][i][j+1][0] == 0:
+                            continue
+                    # if solution[0][i][j][0] == 0:
+                    #     if solution[0][k][l][0] == 0:
+                    #         continue
+                    #     if l + 1 < len(solution[0][k]):
+                    #         if solution[0][k][l+1][0] == 0:
+                    #             continue
+                    # if j + 1 < len(solution[0][i]):
+                    #     if solution[0][i][j-1][0] == 0 and solution[0][i][j+1][0] == 0:
+                    #         continue 
                     if i == k and (j == l or j == l + 1):
                         continue
                     else:
@@ -268,6 +283,7 @@ def Neighborhood_one_opt_standard(solution):
                                             new_solution[1][m].pop(mm)
                                             if new_solution[1][m] == []:
                                                 new_solution[1].pop(m)
+                                                
                         for m in range(len(new_solution[0][i])):
                             city = new_solution[0][i][m][0]
                             if city in pre_drop_package:
@@ -282,6 +298,11 @@ def Neighborhood_one_opt_standard(solution):
                         new_solution = Neighborhood.findLocationForDropPackage(new_solution, k, city_change)
                         # print(new_solution)
                         # print(Function.Check_if_feasible(new_solution))
+                        # print("------------------")
+                        # print(new_solution)
+                        # print(new_solution[0][0])
+                        # print(new_solution[0][1])
+                        # print(new_solution[1])
                         pack_child = []
                         pack_child.append(new_solution)
                         a, b, c = Function.fitness(new_solution)
@@ -290,6 +311,9 @@ def Neighborhood_one_opt_standard(solution):
                         pack_child.append(i)
                         pack_child.append(k)
                         neighborhood.append(pack_child)
+                        # print("------------------")
+                        # print(new_solution)
+                        # print(a)
     return neighborhood
 
 def Neighborhood_one_otp_plus(solution, truck_time):
@@ -331,6 +355,15 @@ def Neighborhood_one_otp_plus(solution, truck_time):
                                         new_solution[1][m].pop(n)
                                         if new_solution[1][m] == []:
                                             new_solution[1].pop(m)
+                                            
+                                            
+                                        else:
+                                            # Thêm vào đây.
+                                            new_solution = Neighborhood.updateDroneQueue(new_solution, del1)
+                                            
+                                            
+                                            
+                                            
                                     stop3 = True
                                     break
                             if stop3: break
@@ -368,6 +401,14 @@ def Neighborhood_one_otp_plus(solution, truck_time):
                                 new_solution[1][del1].pop(del2)
                                 if new_solution[1][del1] == []:
                                     new_solution[1].pop(del1)
+                                    
+                                    
+                                    
+                                else:
+                                    # Thêm vào đây.
+                                    new_solution = Neighborhood.updateDroneQueue(new_solution, del1)
+                                
+                                
                             
                             # Tìm nơi nhận hàng mới cho từng drop_package
                             # Xét từng góp hàng trong drop package
@@ -436,6 +477,15 @@ def Neighborhood_one_otp_plus(solution, truck_time):
                                             new_solution[0][k][number_of_city_change_in_new_truck][
                                                 1] += [city_change]
                                             new_solution[1][m][n][1] += [city_change]
+     
+     
+     
+     
+                                            # Thêm vào đây.
+                                            new_solution = Neighborhood.updateDroneQueue(new_solution, m)
+                                            
+                                            
+                                            
                                             break
                                 if stop1: break
                                 
@@ -492,7 +542,7 @@ def Neighborhood_one_otp_plus(solution, truck_time):
                         pack_child.append([a, b, c])
                         pack_child.append(city_change)  # City change
                         pack_child.append(i)            # Truck mà city change vừa rời
-                        pack_child.append(k)
+                        pack_child.append(k)            # Truck mới của city change
                         neighborhood.append(pack_child)
     return neighborhood
 

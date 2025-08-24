@@ -4,18 +4,19 @@ import random
 import numpy
 import queue
 import time
+
 import Data
 import Neighborhood
 import Neighborhood_for_TSP
 import Neighborhood_drone
-import os
+
 global start_time1
 global start_time
 global start_time2
 
 index_truck_of_cities = [0] * Data.number_of_cities
 epsilon = (-1)*0.00001
-similarity = float(os.getenv('SIMILARITY', '0.6'))
+
 def update_per_loop(solution):
     global index_truck_of_cities
     index_truck_of_cities = [0] * Data.number_of_cities
@@ -167,7 +168,7 @@ def initial_nearest_neighbor_resupply():
     new_solution.append(convert(solution))
     new_solution.append(init_queue(solution))
     return new_solution
-random.seed(6)
+# random.seed(7)
 # For data 1:1
 def initial_solution3():
     route = []
@@ -463,7 +464,7 @@ def initial_solution5():
             # print(best_sol)
             # print("------------", j, "------------")
     
-    print("stage 1: ", fitness(current_sol)[0])
+    # print("stage 1: ", fitness(current_sol)[0])
     
     best_fitness = fitness(best_sol)[0]
     current_sol = best_sol
@@ -527,7 +528,10 @@ def initial_solution7():
         for j in range(len(init_solution[0][i])):
             init_solution[0][i][j][1] = []
 
-    tabu_tenure4 = tabu_tenure1 = tabu_tenure3 = tabu_tenure2 = random.uniform(2*math.log(Data.number_of_cities), Data.number_of_cities)
+    tabu_tenure1 = Data.number_of_cities
+    tabu_tenure2 = Data.number_of_cities
+    tabu_tenure3 = Data.number_of_cities
+    tabu_tenure4 = Data.number_of_cities
     tabu_structure1 = [-tabu_tenure1] * Data.number_of_cities
     tabu_structure2 = [-tabu_tenure1] * Data.number_of_cities
     tabu_structure3 = [-tabu_tenure1] * Data.number_of_cities
@@ -537,10 +541,7 @@ def initial_solution7():
     current_fitness = fitness(current_sol)[0]
     best_sol = current_sol
     best_fitness = current_fitness
-    END_SEGMENT = Data.number_of_cities
-    i = 0
-
-    while i < END_SEGMENT:
+    for i in range(tabu_tenure1*4):
         neighborhood = []
         
         a = random.random()
@@ -642,7 +643,7 @@ def initial_solution7():
             tabu_structure4[neighborhood[index_best_nei][1][index[index_best_nei]][2][0]] = i
             tabu_structure4[neighborhood[index_best_nei][1][index[index_best_nei]][2][2]] = i
     
-        i += 1
+
             # print(best_sol)
             # print("------------", j, "------------")
     
@@ -661,18 +662,14 @@ def initial_solution7():
     
     # print(current_sol)
     # print(fitness(current_sol))
-    abc = 0
-    
-    while if_improved < 1:
+        
+    while if_improved < 2:
         neighborhood = []
         if_improved += 1
         neighborhood1 = Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus(current_sol)
-        neighborhood2 = Neighborhood_drone.Neighborhood_group_trip(current_sol)
-        neighborhood3 = Neighborhood_drone.Neighborhood_change_index_trip(current_sol)
-        
+        neighborhood2 = Neighborhood_drone.Neighborhood_change_index_trip(current_sol)
         neighborhood.append([1, neighborhood1])
         neighborhood.append([2, neighborhood2])
-        neighborhood.append([3, neighborhood3])
         
         index = [-1] * len(neighborhood)
         min_nei = [100000] * len(neighborhood)
@@ -688,7 +685,8 @@ def initial_solution7():
                     if_improved = 0
                     # if_improved = True
                                             
-                elif cfnode - min_nei[j] < epsilon:
+                # elif cfnode - min_nei[j] < epsilon:
+                elif cfnode + epsilon < min_nei[j]:
                     min_nei[j] = cfnode
                     index[j] = k
         index_best_nei = 0
@@ -697,14 +695,16 @@ def initial_solution7():
             if min_nei[j] < best_fit_in_cur_loop:
                 index_best_nei = j
                 best_fit_in_cur_loop = min_nei[j]
-        # if len(neighborhood[index_best_nei][1]) == 0:
-        #     continue
+        if len(neighborhood[index_best_nei][1]) == 0:
+            continue
         current_sol = neighborhood[index_best_nei][1][index[index_best_nei]][0]
         current_fitness = neighborhood[index_best_nei][1][index[index_best_nei]][1][0]
-            
-            
+        # print("---------------------")
+        # print(current_sol)
+        # print(current_fitness)
         
-        return best_sol       
+    
+    return best_sol        
     
 def convert(solution):
     sol = []
@@ -1030,13 +1030,14 @@ def fitness(solution):
     #Declare
     truck_time = [0] * Data.number_of_trucks
     truck_position = []
-    temp = []
+    # print(base_path)
     for i in range(len(base_path)):
-        for j in range(0, len(base_path[i])):
+        temp = []
+        for j in range(len(base_path[i])):
             temp.append(base_path[i][j][0])
         temp.append(0)
         truck_position.append(temp)
-        temp = []
+        
 #    print(truck_position)                      # [[0, 1, 3, 5, 6, 7, 0], [0, 2, 4, 8, 0], [0, 9, 10, 0]]
     truck_current_point = [0] * Data.number_of_trucks
     drone_queue = queue.PriorityQueue()
@@ -1051,49 +1052,88 @@ def fitness(solution):
         '''print("Truck", i, "move from", truck_position[i][truck_current_point[i]], "to", truck_position[i][truck_current_point[i] + 1])'''
         if len(truck_position[i]) != 2:
             distance = Data.manhattan_move_matrix[truck_position[i][truck_current_point[i]]][truck_position[i][truck_current_point[i] + 1]]
-            truck_time[i] = max_release_date(base_path[i][truck_position[i][truck_current_point[i]]][1]) + \
-                                    distance
+            if truck_position[i][truck_current_point[i]] == 0:
+                if base_path[i][truck_current_point[i]][1] != []:
+                    truck_time[i] += Data.unloading_time
+                    
+            truck_time[i] = max_release_date(base_path[i][truck_position[i][truck_current_point[i]]][1]) + distance
             data_truck[i].append(truck_time[i] - distance)
             base_path[i][truck_current_point[i]][1] = []
             truck_current_point[i] = truck_current_point[i] + 1
         else: 
             data_truck[i].append(0)
             data_truck[i].append(0)
-        
+            
     '''print("from depot:", truck_time)'''
-#    print(drone_package)
-    #Truck and drone move
+    # print(drone_package)
+    # Truck and drone move
+    # print(truck_position)
     while True:
         for i in range(Data.number_of_trucks):
-            while base_path[i][truck_current_point[i]][1] == []:
-                if truck_position[i][truck_current_point[i]] == 0: break
+            if truck_current_point[i] == len(truck_position[i]) - 1 :
+                continue
+            # print(i,": ",truck_current_point[i])
+            while base_path[i][truck_current_point[i]][1] == [] or base_path[i][truck_current_point[i]][0] == 0:
+                # print("Hehe: ",truck_current_point[i])
                 distance = Data.manhattan_move_matrix[truck_position[i][truck_current_point[i]]][
                     truck_position[i][truck_current_point[i] + 1]]
+                
                 '''print("Truck", i, "move from", truck_position[i][truck_current_point[i]], "to", truck_position[i][truck_current_point[i] + 1])'''
-                truck_time[i] = truck_time[i] + distance
+                if truck_position[i][truck_current_point[i]] == 0: 
+                    truck_time[i] = max(truck_time[i], max_release_date(base_path[i][truck_current_point[i]][1])) + distance
+                    truck_time[i] += Data.unloading_time
+                else:
+                    truck_time[i] = truck_time[i] + distance
+                    
+                    # print("bef: ", truck_time[i])
+                    truck_time[i] += Data.service_time
+                    # print("after: ", truck_time[i])
+                    # print("ehee")
+                    
                 data_truck[i].append(truck_time[i] - distance)
-
-                if truck_position[i][truck_current_point[i] + 1] != 0:
+                # base_path[i][truck_current_point[i]][1] = []
+                if truck_current_point[i] + 2 < len(truck_position[i]):
+                # if truck_position[i][truck_current_point[i] + 1] != 0:
                     truck_current_point[i] = truck_current_point[i] + 1
                 else:
-                    truck_current_point[i] = 0
+                    truck_current_point[i] = truck_current_point[i] + 1
+                    # truck_current_point[i] = 0
                     break
+                
+        # print("------")
+        # print("Truck current point 0: ", truck_current_point[0])
+        # print("Truck time 0: ",truck_time[0])
+        # print("Truck current point 1: ", truck_current_point[1])
+        # print("Truck time 1: ",truck_time[1])
+                
         number = 0
         # Check stop condition
         for i in range(Data.number_of_trucks):
-            if truck_position[i][truck_current_point[i]] == 0:
+            # if truck_position[i][truck_current_point[i]] == 0:
+            if truck_current_point[i] == len(truck_position[i]) - 1 :
                 number = number + 1
+        
+
         if number == Data.number_of_trucks: break
         drone_pack =[]
+        
+        # print(truck_current_point[i])
+        # print(drone_package)
+        
         for loop in range(len(drone_package[0])):
             for loop1 in range(len(drone_package[0][loop][1])):
                 drone_pack.append(drone_package[0][loop][1][loop1])
         pos, position = find_drone_flight_shortest(solution, drone_package[0])
 
-
+        # print("position: ", position)
+        
         drone_package.pop(0)
         drone = drone_queue.get()       # (43.499585403736305, 'Drone 1')
         start = max(drone[0], max_release_date(drone_pack))         # Thời gian drone có thể xuất phát
+        
+        # print(drone_pack)
+        # print(start)
+        
         LastCityOfDrone = -1
         for i in range(len(position)):
             deliver = []
@@ -1112,16 +1152,34 @@ def fitness(solution):
                 start = start + Data.euclid_flight_matrix[truck_position[position[i-1]][truck_current_point[position[i-1]]]][truck_position[position[i]][truck_current_point[position[i]]]] 
                 LastCityOfDrone = truck_position[position[i]][truck_current_point[position[i]]]
             
-            for j in range(len(deliver)):
+            for j in reversed(range(len(deliver))):
                 for k in range(Data.number_of_trucks):
                     for l in range(truck_current_point[k], len(base_path[k])):
                         if deliver[j] in base_path[k][l][1]:
                             base_path[k][l][1].remove(deliver[j])
                             break
             num = 0
+            # print("-------")
+            # print("deliver: ", deliver)
+            
+            # print(start)
             start = max(start + Data.unloading_time, truck_time[position[i]] + Data.unloading_time)
-            while base_path[position[i]][truck_current_point[position[i]]][1] == []:
-                if truck_position[position[i]][truck_current_point[position[i]]] == 0: break
+            start += Data.service_time
+            
+            
+            # print(start)
+            # print(base_path[position[i]][truck_current_point[position[i]]][1])
+            # base_path[position[i]][truck_current_point[position[i]]][1] = []
+            
+            # print("deliver: ", deliver)
+            
+            # print(base_path[0])
+            # print(base_path[1])
+            
+            while base_path[position[i]][truck_current_point[position[i]]][1] == [] or base_path[position[i]][truck_current_point[position[i]]][0] == 0:
+                # print(truck_current_point[position[i]])
+                if truck_position[position[i]][truck_current_point[position[i]]] == 0: 
+                    truck_time[position[i]] = max(truck_time[position[i]], max_release_date(base_path[position[i]][truck_current_point[position[i]]][1]))
                 '''print("Truck", position[i], "move from", truck_position[position[i]][truck_current_point[position[i]]],
                       "to", truck_position[position[i]][truck_current_point[position[i]] + 1])'''
                 if num == 0:
@@ -1129,6 +1187,14 @@ def fitness(solution):
                                                   truck_position[position[i]][truck_current_point[position[i]]]][
                                                   truck_position[position[i]][truck_current_point[position[i]] + 1]]
                     truck_time[position[i]] = start + distance
+                    
+                    if truck_position[position[i]][truck_current_point[position[i]]] != 0:
+                        # print("bef: ", truck_time[i])
+                        truck_time[position[i]] += Data.service_time
+                        # print("after: ", truck_time[i])
+                        # print("eheh:", truck_position[position[i]][truck_current_point[position[i]]])
+                    else:
+                        truck_time[position[i]] += Data.unloading_time
                     data_truck[position[i]].append(truck_time[position[i]]-distance)
                     #start = max(start + Data.unloading_time, truck_time[position[i]]-distance)
 
@@ -1138,20 +1204,273 @@ def fitness(solution):
                                                   truck_position[position[i]][truck_current_point[position[i]] + 1]]
                     truck_time[position[i]] = truck_time[position[i]] + \
                                               distance
+                    
+                    if truck_position[position[i]][truck_current_point[position[i]]] != 0:
+                        # print("bef: ", truck_time[i])
+                        truck_time[position[i]] += Data.service_time
+                        # print("after: ", truck_time[i])
+                        # print("ehee")
+                        # print("eheh:", truck_position[position[i]][truck_current_point[position[i]]])
+
+                    else:
+                        truck_time[position[i]] += Data.unloading_time
                     data_truck[position[i]].append(truck_time[position[i]]-distance)
                 num = num + 1
-                if truck_position[position[i]][truck_current_point[position[i]] + 1] != 0:
+                
+                if truck_current_point[position[i]] + 1 < len(truck_position[position[i]]) - 1:
                     truck_current_point[position[i]] = truck_current_point[position[i]] + 1
                 else:
-                    truck_current_point[position[i]] = 0
+                    truck_current_point[position[i]] = truck_current_point[position[i]] + 1
+                    # truck_current_point[position[i]] = 0
                     break
                 # Cộng Data.unloading_time vào drone
+            
+            # print()
+            
+            
+            number = 0
+            for i in range(Data.number_of_trucks):
+                # if truck_position[i][truck_current_point[i]] == 0:
+                if truck_current_point[i] == len(truck_position[i]) - 1 :
+                    number = number + 1
+            
+        if number == Data.number_of_trucks: 
+            # print("END")
+            break
+        
         end = start + Data.euclid_flight_matrix[LastCityOfDrone][0]
         '''print("This: ",Data.euclid_flight_matrix[LastCityOfDrone][0])'''
         drone_queue.put((end, drone[1]))
         '''print(drone[1], "flight from", truck_position[position[-1]][truck_current_point[position[-1]]], "to 0")
         print("nah",truck_time)'''
-    value = max(truck_time)
+    value = max(truck_time) 
+    return value, data_truck, sum(truck_time)
+
+
+def fitness_around(solution):
+    drone_package = copy.deepcopy(solution[1])
+    base_path = copy.deepcopy(solution[0])
+    data_truck = []
+    for i in range(Data.number_of_trucks):
+        temp = []
+        data_truck.append(temp)
+    #Declare
+    truck_time = [0] * Data.number_of_trucks
+    truck_position = []
+    # print(base_path)
+    for i in range(len(base_path)):
+        temp = []
+        for j in range(len(base_path[i])):
+            temp.append(base_path[i][j][0])
+        temp.append(0)
+        truck_position.append(temp)
+        
+#    print(truck_position)                      # [[0, 1, 3, 5, 6, 7, 0], [0, 2, 4, 8, 0], [0, 9, 10, 0]]
+    truck_current_point = [0] * Data.number_of_trucks
+    drone_queue = queue.PriorityQueue()
+    for i in range(0, Data.number_of_drones):
+        drone_queue.put((0, "Drone %i" % i))
+#    print(drone_queue.get())       # (0, 'Drone 0')
+    compare = [0] * Data.number_of_trucks
+    #Decode
+
+    #Truck move form depot
+    for i in range(Data.number_of_trucks):
+        '''print("Truck", i, "move from", truck_position[i][truck_current_point[i]], "to", truck_position[i][truck_current_point[i] + 1])'''
+        if len(truck_position[i]) != 2:
+            distance = Data.manhattan_move_matrix[truck_position[i][truck_current_point[i]]][truck_position[i][truck_current_point[i] + 1]]
+            if truck_position[i][truck_current_point[i]] == 0:
+                if base_path[i][truck_current_point[i]][1] != []:
+                    truck_time[i] += Data.unloading_time
+                    
+            truck_time[i] = max_release_date(base_path[i][truck_position[i][truck_current_point[i]]][1]) + distance
+            data_truck[i].append(truck_time[i] - distance)
+            base_path[i][truck_current_point[i]][1] = []
+            truck_current_point[i] = truck_current_point[i] + 1
+        else: 
+            data_truck[i].append(0)
+            data_truck[i].append(0)
+            
+    '''print("from depot:", truck_time)'''
+    # print(drone_package)
+    # Truck and drone move
+    # print(truck_position)
+    while True:
+        for i in range(Data.number_of_trucks):
+            if truck_current_point[i] == len(truck_position[i]) - 1 :
+                continue
+            # print(i,": ",truck_current_point[i])
+            while base_path[i][truck_current_point[i]][1] == [] or base_path[i][truck_current_point[i]][0] == 0:
+                # print("Hehe: ",truck_current_point[i])
+                distance = Data.manhattan_move_matrix[truck_position[i][truck_current_point[i]]][
+                    truck_position[i][truck_current_point[i] + 1]]
+                
+                '''print("Truck", i, "move from", truck_position[i][truck_current_point[i]], "to", truck_position[i][truck_current_point[i] + 1])'''
+                if truck_position[i][truck_current_point[i]] == 0: 
+                    truck_time[i] = max(truck_time[i], max_release_date(base_path[i][truck_current_point[i]][1])) + distance
+                    truck_time[i] += Data.unloading_time
+                else:
+                    truck_time[i] = truck_time[i] + distance
+                    
+                    # print("bef: ", truck_time[i])
+                    truck_time[i] += Data.service_time
+                    # print("after: ", truck_time[i])
+                    # print("ehee")
+                    
+                data_truck[i].append(truck_time[i] - distance)
+                # base_path[i][truck_current_point[i]][1] = []
+                if truck_current_point[i] + 2 < len(truck_position[i]):
+                # if truck_position[i][truck_current_point[i] + 1] != 0:
+                    truck_current_point[i] = truck_current_point[i] + 1
+                else:
+                    truck_current_point[i] = truck_current_point[i] + 1
+                    # truck_current_point[i] = 0
+                    break
+                
+        # print("------")
+        # print("Truck current point 0: ", truck_current_point[0])
+        # print("Truck time 0: ",truck_time[0])
+        # print("Truck current point 1: ", truck_current_point[1])
+        # print("Truck time 1: ",truck_time[1])
+                
+        number = 0
+        # Check stop condition
+        for i in range(Data.number_of_trucks):
+            # if truck_position[i][truck_current_point[i]] == 0:
+            if truck_current_point[i] == len(truck_position[i]) - 1 :
+                number = number + 1
+        
+
+        if number == Data.number_of_trucks: break
+        drone_pack =[]
+        
+        # print(truck_current_point[i])
+        # print(drone_package)
+        
+        for loop in range(len(drone_package[0])):
+            for loop1 in range(len(drone_package[0][loop][1])):
+                drone_pack.append(drone_package[0][loop][1][loop1])
+        pos, position = find_drone_flight_shortest(solution, drone_package[0])
+
+        # print("position: ", position)
+        
+        drone_package.pop(0)
+        drone = drone_queue.get()       # (43.499585403736305, 'Drone 1')
+        start = max(drone[0], max_release_date(drone_pack))         # Thời gian drone có thể xuất phát
+        
+        # print(drone_pack)
+        # print(start)
+        
+        LastCityOfDrone = -1
+        for i in range(len(position)):
+            deliver = []
+            for j in range(len(drone_pack)):
+                if package_in_which_truck(base_path, drone_pack[j]) == position[i]:
+                    deliver.append(drone_pack[j])
+            if i == 0:
+                '''print(drone[1], "flight from 0 to", truck_position[position[i]][truck_current_point[position[i]]],
+                  "bring package", drone_pack, "deliver", deliver, "at", start,"take distance ",)'''
+                start = start + Data.euclid_flight_matrix[0][truck_position[position[i]][truck_current_point[position[i]]]] 
+                LastCityOfDrone = truck_position[position[i]][truck_current_point[position[i]]]
+            else:
+                '''print(drone[1], "flight from", truck_position[position[i-1]][truck_current_point[position[i-1]]],
+                      "to", truck_position[position[i]][truck_current_point[position[i]]],
+                      "bring package", drone_pack, "deliver", deliver,"at", start)'''
+                start = start + Data.euclid_flight_matrix[truck_position[position[i-1]][truck_current_point[position[i-1]]]][truck_position[position[i]][truck_current_point[position[i]]]] 
+                LastCityOfDrone = truck_position[position[i]][truck_current_point[position[i]]]
+            
+            for j in reversed(range(len(deliver))):
+                for k in range(Data.number_of_trucks):
+                    for l in range(truck_current_point[k], len(base_path[k])):
+                        if deliver[j] in base_path[k][l][1]:
+                            base_path[k][l][1].remove(deliver[j])
+                            break
+            num = 0
+            # print("-------")
+            # print("deliver: ", deliver)
+            
+            # print(start)
+            start = max(start + Data.unloading_time, truck_time[position[i]] + Data.unloading_time)
+            start += Data.service_time
+            
+            
+            # print(start)
+            # print(base_path[position[i]][truck_current_point[position[i]]][1])
+            # base_path[position[i]][truck_current_point[position[i]]][1] = []
+            
+            # print("deliver: ", deliver)
+            
+            # print(base_path[0])
+            # print(base_path[1])
+            
+            while base_path[position[i]][truck_current_point[position[i]]][1] == [] or base_path[position[i]][truck_current_point[position[i]]][0] == 0:
+                # print(truck_current_point[position[i]])
+                if truck_position[position[i]][truck_current_point[position[i]]] == 0: 
+                    truck_time[position[i]] = max(truck_time[position[i]], max_release_date(base_path[position[i]][truck_current_point[position[i]]][1]))
+                '''print("Truck", position[i], "move from", truck_position[position[i]][truck_current_point[position[i]]],
+                      "to", truck_position[position[i]][truck_current_point[position[i]] + 1])'''
+                if num == 0:
+                    distance = Data.manhattan_move_matrix[
+                                                  truck_position[position[i]][truck_current_point[position[i]]]][
+                                                  truck_position[position[i]][truck_current_point[position[i]] + 1]]
+                    truck_time[position[i]] = start + distance
+                    
+                    if truck_position[position[i]][truck_current_point[position[i]]] != 0:
+                        # print("bef: ", truck_time[i])
+                        truck_time[position[i]] += Data.service_time
+                        # print("after: ", truck_time[i])
+                        # print("eheh:", truck_position[position[i]][truck_current_point[position[i]]])
+                    else:
+                        truck_time[position[i]] += Data.unloading_time
+                    data_truck[position[i]].append(truck_time[position[i]]-distance)
+                    #start = max(start + Data.unloading_time, truck_time[position[i]]-distance)
+
+                else:
+                    distance = Data.manhattan_move_matrix[
+                                                  truck_position[position[i]][truck_current_point[position[i]]]][
+                                                  truck_position[position[i]][truck_current_point[position[i]] + 1]]
+                    truck_time[position[i]] = truck_time[position[i]] + \
+                                              distance
+                    
+                    if truck_position[position[i]][truck_current_point[position[i]]] != 0:
+                        # print("bef: ", truck_time[i])
+                        truck_time[position[i]] += Data.service_time
+                        # print("after: ", truck_time[i])
+                        # print("ehee")
+                        # print("eheh:", truck_position[position[i]][truck_current_point[position[i]]])
+
+                    else:
+                        truck_time[position[i]] += Data.unloading_time
+                    data_truck[position[i]].append(truck_time[position[i]]-distance)
+                num = num + 1
+                
+                if truck_current_point[position[i]] + 1 < len(truck_position[position[i]]) - 1:
+                    truck_current_point[position[i]] = truck_current_point[position[i]] + 1
+                else:
+                    truck_current_point[position[i]] = truck_current_point[position[i]] + 1
+                    # truck_current_point[position[i]] = 0
+                    break
+                # Cộng Data.unloading_time vào drone
+            
+            # print()
+            
+            
+            number = 0
+            for i in range(Data.number_of_trucks):
+                # if truck_position[i][truck_current_point[i]] == 0:
+                if truck_current_point[i] == len(truck_position[i]) - 1 :
+                    number = number + 1
+            
+        if number == Data.number_of_trucks: 
+            # print("END")
+            break
+        
+        end = start + Data.euclid_flight_matrix[LastCityOfDrone][0]
+        '''print("This: ",Data.euclid_flight_matrix[LastCityOfDrone][0])'''
+        drone_queue.put((end, drone[1]))
+        '''print(drone[1], "flight from", truck_position[position[-1]][truck_current_point[position[-1]]], "to 0")
+        print("nah",truck_time)'''
+    value = max(truck_time) 
     return value, data_truck, sum(truck_time)
 
 def cal_truck_time(solution):
@@ -1481,7 +1800,7 @@ def Compare_two_solution_2(solution1, solution2):
     # print("vs")
     # print(solution2[0])
     # print(total_score)
-    if total_score > similarity * (Data.number_of_cities - 1):
+    if total_score > 0.6 * (Data.number_of_cities - 1):
         return True
     else:
         return False
@@ -1493,3 +1812,163 @@ def return_truck_route(solution):
             sol1[0][i][j][1] = []
     # sol1.pop()
     return sol1
+
+def check_if_drone_time_out_of_limit(solution):
+    drone_package = copy.deepcopy(solution[1])
+    base_path = copy.deepcopy(solution[0])
+    data_truck = []
+    for i in range(Data.number_of_trucks):
+        temp = []
+        data_truck.append(temp)
+    #Declare
+    truck_time = [0] * Data.number_of_trucks
+    truck_position = []
+    temp = []
+    for i in range(len(base_path)):
+        for j in range(0, len(base_path[i])):
+            temp.append(base_path[i][j][0])
+        temp.append(0)
+        truck_position.append(temp)
+        temp = []
+#    print(truck_position)                      # [[0, 1, 3, 5, 6, 7, 0], [0, 2, 4, 8, 0], [0, 9, 10, 0]]
+    truck_current_point = [0] * Data.number_of_trucks
+    drone_queue = queue.PriorityQueue()
+    for i in range(0, Data.number_of_drones):
+        drone_queue.put((0, "Drone %i" % i))
+#    print(drone_queue.get())       # (0, 'Drone 0')
+    compare = [0] * Data.number_of_trucks
+    #Decode
+
+    #Truck move form depot
+    for i in range(Data.number_of_trucks):
+        '''print("Truck", i, "move from", truck_position[i][truck_current_point[i]], "to", truck_position[i][truck_current_point[i] + 1])'''
+        if len(truck_position[i]) != 2:
+            distance = Data.manhattan_move_matrix[truck_position[i][truck_current_point[i]]][truck_position[i][truck_current_point[i] + 1]]
+            truck_time[i] = max_release_date(base_path[i][truck_position[i][truck_current_point[i]]][1]) + \
+                                    distance
+            data_truck[i].append(truck_time[i] - distance)
+            base_path[i][truck_current_point[i]][1] = []
+            truck_current_point[i] = truck_current_point[i] + 1
+        else: 
+            data_truck[i].append(0)
+            data_truck[i].append(0)
+        
+    '''print("from depot:", truck_time)'''
+#    print(drone_package)
+    #Truck and drone move
+    while True:
+        for i in range(Data.number_of_trucks):
+            while base_path[i][truck_current_point[i]][1] == []:
+                if truck_position[i][truck_current_point[i]] == 0: break
+                distance = Data.manhattan_move_matrix[truck_position[i][truck_current_point[i]]][
+                    truck_position[i][truck_current_point[i] + 1]]
+                '''print("Truck", i, "move from", truck_position[i][truck_current_point[i]], "to", truck_position[i][truck_current_point[i] + 1])'''
+                truck_time[i] = truck_time[i] + distance
+                data_truck[i].append(truck_time[i] - distance)
+
+                if truck_position[i][truck_current_point[i] + 1] != 0:
+                    truck_current_point[i] = truck_current_point[i] + 1
+                else:
+                    truck_current_point[i] = 0
+                    break
+        number = 0
+        # Check stop condition
+        for i in range(Data.number_of_trucks):
+            if truck_position[i][truck_current_point[i]] == 0:
+                number = number + 1
+        if number == Data.number_of_trucks: break
+        drone_pack =[]
+        for loop in range(len(drone_package[0])):
+            for loop1 in range(len(drone_package[0][loop][1])):
+                drone_pack.append(drone_package[0][loop][1][loop1])
+        pos, position = find_drone_flight_shortest(solution, drone_package[0])
+
+
+        drone_package.pop(0)
+        drone = drone_queue.get()       # (43.499585403736305, 'Drone 1')
+        start = max(drone[0], max_release_date(drone_pack))         # Thời gian drone có thể xuất phát
+        start_time1 = max(drone[0], max_release_date(drone_pack))
+        minus_first_time = 0
+        LastCityOfDrone = -1
+        for i in range(len(position)):
+            deliver = []
+            for j in range(len(drone_pack)):
+                if package_in_which_truck(base_path, drone_pack[j]) == position[i]:
+                    deliver.append(drone_pack[j])
+            if i == 0:
+                '''print(drone[1], "flight from 0 to", truck_position[position[i]][truck_current_point[position[i]]],
+                  "bring package", drone_pack, "deliver", deliver, "at", start,"take distance ",)'''
+                start = start + Data.euclid_flight_matrix[0][truck_position[position[i]][truck_current_point[position[i]]]] 
+                
+                LastCityOfDrone = truck_position[position[i]][truck_current_point[position[i]]]
+            else:
+                '''print(drone[1], "flight from", truck_position[position[i-1]][truck_current_point[position[i-1]]],
+                      "to", truck_position[position[i]][truck_current_point[position[i]]],
+                      "bring package", drone_pack, "deliver", deliver,"at", start)'''
+                start = start + Data.euclid_flight_matrix[truck_position[position[i-1]][truck_current_point[position[i-1]]]][truck_position[position[i]][truck_current_point[position[i]]]] 
+                LastCityOfDrone = truck_position[position[i]][truck_current_point[position[i]]]
+            
+            for j in range(len(deliver)):
+                for k in range(Data.number_of_trucks):
+                    for l in range(truck_current_point[k], len(base_path[k])):
+                        if deliver[j] in base_path[k][l][1]:
+                            base_path[k][l][1].remove(deliver[j])
+                            break
+            num = 0
+            start = max(start + Data.unloading_time, truck_time[position[i]] + Data.unloading_time)
+            if i == 0:
+                if truck_time[position[i]] < start:
+                    minus_first_time = start - truck_time[position[i]]
+            while base_path[position[i]][truck_current_point[position[i]]][1] == []:
+                if truck_position[position[i]][truck_current_point[position[i]]] == 0: break
+                '''print("Truck", position[i], "move from", truck_position[position[i]][truck_current_point[position[i]]],
+                      "to", truck_position[position[i]][truck_current_point[position[i]] + 1])'''
+                if num == 0:
+                    distance = Data.manhattan_move_matrix[
+                                                  truck_position[position[i]][truck_current_point[position[i]]]][
+                                                  truck_position[position[i]][truck_current_point[position[i]] + 1]]
+                    truck_time[position[i]] = start + distance
+                    data_truck[position[i]].append(truck_time[position[i]]-distance)
+                    #start = max(start + Data.unloading_time, truck_time[position[i]]-distance)
+
+                else:
+                    distance = Data.manhattan_move_matrix[
+                                                  truck_position[position[i]][truck_current_point[position[i]]]][
+                                                  truck_position[position[i]][truck_current_point[position[i]] + 1]]
+                    truck_time[position[i]] = truck_time[position[i]] + \
+                                              distance
+                    data_truck[position[i]].append(truck_time[position[i]]-distance)
+                num = num + 1
+                if truck_position[position[i]][truck_current_point[position[i]] + 1] != 0:
+                    truck_current_point[position[i]] = truck_current_point[position[i]] + 1
+                else:
+                    truck_current_point[position[i]] = 0
+                    break
+                # Cộng Data.unloading_time vào drone
+        end = start + Data.euclid_flight_matrix[LastCityOfDrone][0]
+        drone_time_fly = end - start_time1 - minus_first_time
+        
+        if drone_time_fly > Data.drone_limit_time:
+            return False
+        
+        drone_queue.put((end, drone[1]))
+        
+    return True
+
+def determine_start_end(solution, index_truck, city):
+    index_ = -1
+    for i in range(len(solution[0][index_truck])):
+        if solution[0][index_truck][i][0] == city:
+            index_ = i
+            break
+    start = 0
+    end = len(solution[0][index_truck])
+    for i in reversed(range(0, index_+1)):
+        if solution[0][index_truck][i][0] == 0:
+            start = i
+            break
+    for i in reversed(range(index_, len(solution[0][index_truck]))):
+        if solution[0][index_truck][i][0] == 0:
+            end = i
+            break
+    return start, end

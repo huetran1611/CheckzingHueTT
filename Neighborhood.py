@@ -19,11 +19,11 @@ def addNewTripInDroneRoute(solution, ChangesPackages, ChangeInTruck, IndexOfNewR
     min_point = -1  # Chiếu theo điểm nhận hàng
     max_point = -1
     for a in range(IndexOfNewReceiveCity - 1, 0, -1):  # Tìm min_point_check trên new_solution1[1]
-        if solution[0][ChangeInTruck][a][1] != []:
+        if solution[0][ChangeInTruck][a][1] != [] and solution[0][ChangeInTruck][a][0] != 0:
             min_point = solution[0][ChangeInTruck][a][0]
             break
     for a in range(IndexOfNewReceiveCity + 1, len(solution[0][ChangeInTruck])):  # Tìm max_point_check trên new_solution1[1]
-        if solution[0][ChangeInTruck][a][1] != []:
+        if solution[0][ChangeInTruck][a][1] != [] and solution[0][ChangeInTruck][a][0] != 0:
             max_point = solution[0][ChangeInTruck][a][0]
             break
     if min_point != -1:  # Kiểm tra và điều chỉnh min_point
@@ -38,12 +38,13 @@ def addNewTripInDroneRoute(solution, ChangesPackages, ChangeInTruck, IndexOfNewR
                 break
     else:
         start_check_point_in_drone_queue = 0
-        
+    # print(min_point)
+    # print(max_point)   
     number_in_the_drone_queue_of_drop_package = -1
     check_max = False
     time_fly = Function.cal_time_fly_a_trip([[NewReceiveCity, []]])
     total_time = time_fly + Function.max_release_date(ChangesPackages)
-
+    
     if max_point != -1:  # Add trip mới vào thứ tự giao hàng của drone
         for a in range(start_check_point_in_drone_queue, len(solution[1])):
             for b in range(len(solution[1][a])):
@@ -52,6 +53,7 @@ def addNewTripInDroneRoute(solution, ChangesPackages, ChangeInTruck, IndexOfNewR
                     check_max = True
                     break
             if  total_time < Function.max_release_date_update(solution[1][a]) + Function.cal_time_fly_a_trip(solution[1][a]):
+            # if  Function.max_release_date(ChangesPackages) < Function.max_release_date_update(solution[1][a]):
                 number_in_the_drone_queue_of_drop_package = a
                 check_max = True
                 break
@@ -59,6 +61,7 @@ def addNewTripInDroneRoute(solution, ChangesPackages, ChangeInTruck, IndexOfNewR
     else:
         for a in range(start_check_point_in_drone_queue, len(solution[1])):
             if total_time < Function.max_release_date_update(solution[1][a]) + Function.cal_time_fly_a_trip(solution[1][a]):
+            # if Function.max_release_date(ChangesPackages) < Function.max_release_date_update(solution[1][a]):
                 number_in_the_drone_queue_of_drop_package = a
                 check_max = True
                 break
@@ -75,18 +78,29 @@ def addNewTripInDroneRoute(solution, ChangesPackages, ChangeInTruck, IndexOfNewR
 # Phục vụ cho nei Neighborghood_change_drone_route, đọc lúc sau
 def groupTripInDroneRoute(solution, ChangesPackages, ChangeInTruck, IndexOfNewReceiveCity):
     ReceiveCity = solution[0][ChangeInTruck][IndexOfNewReceiveCity][0]
+    # print(ReceiveCity)
     count = len(solution[0][ChangeInTruck][IndexOfNewReceiveCity][1]) - len(ChangesPackages)
     index_drone_trip = -1
     index_in_trip = -1
     #print("Change: ",ChangesPackages)
+    if ReceiveCity == 0:
+        return solution, index_drone_trip, index_in_trip, True
     for i in range(len(solution[1])):
         for j in range(len(solution[1][i])):
             if solution[1][i][j][0] == ReceiveCity:
                 if Function.total_demand(solution[1][i]) + Function.sum_weight(ChangesPackages) <= Data.drone_capacity:
-                    index_drone_trip = i
                     index_in_trip = j
                     for k in range(len(ChangesPackages)):
                         solution[1][i][j][1] = solution[1][i][j][1] + [ChangesPackages[k]]
+                    # print("cout: ", solution)
+                    # print("i :", i)
+                    # print("before: ")
+                    # print(solution)
+                    
+                    solution, index = updateDroneQueueReturnNewIndex(solution=solution, index_trip=i)
+                    index_drone_trip = index
+                    # print("after: ")
+                    # print(solution)
                     return solution, index_drone_trip, index_in_trip, True
                 count = count - len(solution[1][i][j][1])
             if count == 0:
@@ -338,48 +352,39 @@ def swap_two_array(solution):
                         # print("----")
                         pre_drop_package = []
                         drop_package = []
-                        # print(i,", ",j,", ",k, ",", l)
-                        for x in range(i, j+1):
-                            pre_drop_package.append(solution[0][aa][x][0])
-                        for x in range(k, l+1):
-                            pre_drop_package.append(solution[0][aa][x][0])
-                        # print(drop_package)
-                        for x in range(i, j + 1):
-                            for y in range(len(solution[0][aa][x][1])):
-                                pack = solution[0][aa][x][1][y]
-                                if pack not in pre_drop_package:
-                                    pre_drop_package.append(pack)
-                        for x in range(k, l + 1):
-                            for y in range(len(solution[0][aa][x][1])):
-                                pack = solution[0][aa][x][1][y]
-                                if pack not in pre_drop_package:
-                                    pre_drop_package.append(pack)
-                        # print(pre_drop_package)
-                        for x in range(length+1):
-                            for y in reversed(range(len(solution[0][aa][x][1]))):
-                                pack = solution[0][aa][x][1][y]
-                                if pack in pre_drop_package:
-                                    new_solution[0][aa][x][1].remove(pack)
-                        new_solution[0][aa] = new_solution[0][aa][:i] + new_solution[0][aa][k:l+1] + new_solution[0][aa][j+1:k] + new_solution[0][aa][i:j+1] + new_solution[0][aa][l+1:]
-                        
-                        for x in reversed(range(len(new_solution[1]))):
-                            for y in reversed(range(len(new_solution[1][x]))):
-                                for z in reversed(range(len(new_solution[1][x][y][1]))):
-                                    pack = new_solution[1][x][y][1][z]
-                                    if pack in pre_drop_package:
-                                        new_solution[1][x][y][1].remove(pack)
-                                    if z == 0:
-                                        if new_solution[1][x][y][1] == []:
-                                            new_solution[1][x].pop(y)
-                                            if new_solution[1][x] == []:
-                                                new_solution[1].pop(x)
 
                         for x in range(len(new_solution[0][aa])):
+                            new_solution[0][aa][x][1] = []
+                        new_solution[0][aa] = new_solution[0][aa][:i] + new_solution[0][aa][k:l+1] + new_solution[0][aa][j+1:k] + new_solution[0][aa][i:j+1] + new_solution[0][aa][l+1:]
+                        
+                        for x in range(len(new_solution[0][aa])):
+                            pre_drop_package.append(new_solution[0][aa][x][0])
+                            for xx in range(len(new_solution[0][aa][x][1])):
+                                cityy = new_solution[0][aa][x][1][xx]
+                                if cityy not in pre_drop_package:
+                                    pre_drop_package.append(cityy)
+                            new_solution[0][aa][x][1] = []
+                    
+                                    
+                        for m in reversed(range(len(new_solution[1]))):
+                            for mm in reversed(range(len(new_solution[1][m]))):
+                                for mmm in reversed(range(len(new_solution[1][m][mm][1]))):
+                                    city = new_solution[1][m][mm][1][mmm]
+                                    if city in pre_drop_package:
+                                        new_solution[1][m][mm][1].pop(mmm)
+                                        if new_solution[1][m][mm][1] == []:
+                                            new_solution[1][m].pop(mm)
+                                            if new_solution[1][m] == []:
+                                                new_solution[1].pop(m)
+                        
+                        
+                        
+                        for x in range(len(new_solution[0][aa])):
                             city = new_solution[0][aa][x][0]
-                            if city in pre_drop_package:
+                            if city != 0 and city in pre_drop_package:
                                 drop_package.append(city)
                         # print(drop_package)
-                        # print(new_solution)
+                        
                         for x in range(len(drop_package)):
                             # print("----------")
                             # print(aa)
@@ -387,8 +392,11 @@ def swap_two_array(solution):
                             # print(new_solution)
                             new_solution = findLocationForDropPackage(new_solution, aa, drop_package[x])
                         # print(new_solution[0])
-                        # print("hehe")
-                        # print(new_solution)
+                        # print("-----------------------------------")
+                        # print(new_solution[0][0])
+                        # print(new_solution[0][1])
+                        # print(new_solution[1])
+                        # print("-----------------------------------")
                         # print(Function.Check_if_feasible(new_solution))
                         # print(new_solution[1])
                         # print("End: ",new_solution)
@@ -402,22 +410,187 @@ def swap_two_array(solution):
                         neighborhood.append(pack_child)
     return neighborhood, solution_pack
 
+def findUpAndLowBoundedOfPackage(solution, package):
+    index_truck = -1
+    index_package_in_truck = -1
+    stop410 = False
+    for i in range(len(solution[0])):
+        for j in range(1, len(solution[0][i])):
+            if solution[0][i][j][0] == package:
+                index_package_in_truck = j
+                index_truck = i
+                stop410 = True
+                break
+        if stop410:
+            break
+    
+    low_bounded = -1
+    up_bounded = -1
+    for i in range(index_package_in_truck + 1, len(solution[0][index_truck])):
+        if solution[0][index_truck][i][1] != [] and solution[0][index_truck][i][0] != 0:
+            up_bounded = solution[0][index_truck][i][0]
+            break
+        
+    for i in range(index_package_in_truck - 1, 0, -1):
+        if solution[0][index_truck][i][1] != [] and solution[0][index_truck][i][0] != 0:
+            low_bounded = solution[0][index_truck][i][0]
+            break
+    
+    return low_bounded, up_bounded
+    
+def updateDroneQueue(solution, index_trip):
+    low_bounded = []
+    up_bounded = []
+    for i in range(len(solution[1][index_trip])):
+        a, b = findUpAndLowBoundedOfPackage(solution, solution[1][index_trip][i][0])
+        if a != -1:
+            low_bounded.append(a)
+        if b != -1:   
+            up_bounded.append(b)
+    
+    start_index_update = 0
+    end_index_update = len(solution[1]) - 1 
+    
+    if len(low_bounded) != 0:
+        for i in range(len(solution[1])):
+            for j in range(len(solution[1][i])):
+                if solution[1][i][j][0] in low_bounded:
+                    start_index_update = i + 1
+                    low_bounded.remove(solution[1][i][j][0])
+            if len(low_bounded) == 0:
+                    break
+                
+    if len(up_bounded) != 0:
+        for i in reversed(range(len(solution[1]))):
+            for j in range(len(solution[1][i])):
+                if solution[1][i][j][0] in up_bounded:
+                    end_index_update = i - 1 
+                    up_bounded.remove(solution[1][i][j][0])
+                    
+            if len(up_bounded) == 0:
+                    break
+    
+    trip = copy.deepcopy(solution[1][index_trip])
+    solution[1].pop(index_trip)
+    
+    max_rd = Function.max_release_date_update(trip) + Function.cal_time_fly_a_trip(trip)
+    place = False
+
+    # print(start_index_update, "-------", end_index_update)
+    
+    if start_index_update != end_index_update:
+        if Function.max_release_date_update(solution[1][start_index_update]) + Function.cal_time_fly_a_trip(solution[1][start_index_update]) >= max_rd:
+            solution[1].insert(start_index_update, trip)
+            place = True
+        else:
+            for i in range(start_index_update, end_index_update - 1):
+                if Function.max_release_date_update(solution[1][i]) + Function.cal_time_fly_a_trip(solution[1][start_index_update]) <= max_rd and \
+                    max_rd <= Function.max_release_date_update(solution[1][i + 1]) + Function.cal_time_fly_a_trip(solution[1][start_index_update]):
+                    solution[1].insert(i + 1, trip)
+                    place = True
+                    break
+        
+        if not place:
+            solution[1].insert(end_index_update, trip)
+    else:
+        solution[1].insert(start_index_update, trip)
+    
+    return solution
+    
+def updateDroneQueueReturnNewIndex(solution, index_trip):
+    index_drone_trip = -1
+    low_bounded = []
+    up_bounded = []
+    for i in range(len(solution[1][index_trip])):
+        a, b = findUpAndLowBoundedOfPackage(solution, solution[1][index_trip][i][0])
+        if a != -1:
+            low_bounded.append(a)
+        if b != -1:   
+            up_bounded.append(b)
+    # print(low_bounded,"------", up_bounded)
+    start_index_update = 0
+    end_index_update = len(solution[1]) - 1 
+    
+    # if len(low_bounded) != 0:
+    #     for i in range(len(solution[1])):
+    #         for j in range(len(solution[1][i])):
+    #             if solution[1][i][j][0] in low_bounded:
+    #                 start_index_update = i + 1
+    #                 low_bounded.remove(solution[1][i][j][0])
+    #         if len(low_bounded) == 0:
+    #                 break
+    
+    if len(low_bounded) != 0:
+        for i in reversed(range(index_trip)):
+            for j in range(len(solution[1][i])):
+                if solution[1][i][j][0] in low_bounded:
+                    # print(i)
+                    start_index_update = i + 1
+                    low_bounded.remove(solution[1][i][j][0])
+            if len(low_bounded) == 0:
+                    break
+                
+    if len(up_bounded) != 0:
+        for i in range(index_trip + 1,len(solution[1])):
+            for j in range(len(solution[1][i])):
+                if solution[1][i][j][0] in up_bounded:
+                    # print(i)
+                    end_index_update = i - 1
+                    up_bounded.remove(solution[1][i][j][0])
+                    
+            if len(up_bounded) == 0:
+                    break
+    
+    trip = copy.deepcopy(solution[1][index_trip])
+    solution[1].pop(index_trip)
+    
+    max_rd = Function.max_release_date_update(trip) + Function.cal_time_fly_a_trip(trip)
+    place = False
+
+    # print(start_index_update, "-------", end_index_update)
+    
+    if start_index_update != end_index_update:
+        if Function.max_release_date_update(solution[1][start_index_update]) + Function.cal_time_fly_a_trip(solution[1][start_index_update]) >= max_rd:
+            solution[1].insert(start_index_update, trip)
+            place = True
+            index_drone_trip = start_index_update
+        else:
+            for i in range(start_index_update, end_index_update - 1):
+                if Function.max_release_date_update(solution[1][i]) + Function.cal_time_fly_a_trip(solution[1][start_index_update]) <= max_rd and \
+                    max_rd <= Function.max_release_date_update(solution[1][i + 1]) + Function.cal_time_fly_a_trip(solution[1][start_index_update]):
+                    solution[1].insert(i + 1, trip)
+                    place = True
+                    index_drone_trip = i+1
+                    break
+        
+        if not place:
+            solution[1].insert(end_index_update, trip)
+            index_drone_trip = end_index_update
+    else:
+        solution[1].insert(start_index_update, trip)
+        index_drone_trip = start_index_update
+    
+    return solution, index_drone_trip
+  
 def findLocationForDropPackage(new_solution, index_truck, drop_package):
     list_check = []  # Tập hợp điểm nhận hàng trên truck
     check = False
     stop = False
     stop1 = False
     max_index = - 1  # Tìm điểm cuối cùng có thể nhận được new_package hợp lệ trên route_truck
+    start_, end_ =Function.determine_start_end(new_solution, index_truck, drop_package)
     if Data.release_date[drop_package] == 0 or Data.city_demand[drop_package] > Data.drone_capacity:
         new_solution[0][index_truck][0][1] += [drop_package]
         stop = True
-    elif Function.max_release_date(new_solution[0][index_truck][0][1]) * DIFFERENTIAL_RATE_RELEASE_TIME + Data.standard_deviation > \
-            Data.release_date[drop_package] and Function.min_release_date(new_solution[0][index_truck][0][1]) * \
-            DIFFERENTIAL_RATE_RELEASE_TIME + C_ratio * Data.standard_deviation > Data.release_date[drop_package]:
-        new_solution[0][index_truck][0][1] += [drop_package] 
+    elif Function.max_release_date(new_solution[0][index_truck][start_][1]) * DIFFERENTIAL_RATE_RELEASE_TIME + Data.standard_deviation > \
+            Data.release_date[drop_package] or Data.city_demand[drop_package] > Data.drone_capacity:
+        new_solution[0][index_truck][start_][1] += [drop_package] 
         stop = True
-    else:
-        for m in range(len(new_solution[0][index_truck])):
+            
+    if not stop:
+        
+        # for m in range(len(new_solution[0][index_truck])):
+        for m in range(start_ + 1, len(new_solution[0][index_truck])):
             # print(new_solution)
             # print(new_solution[0][index_truck])
             # print(m)
@@ -428,7 +601,7 @@ def findLocationForDropPackage(new_solution, index_truck, drop_package):
                 if a == drop_package:
                     check = True
             else:
-                if new_solution[0][index_truck][m][1] != []:
+                if new_solution[0][index_truck][m][1] != [] and new_solution[0][index_truck][m][0] != 0:
                     max_index = a
                     break
         for m in range(len(new_solution[1])):  # Duyệt có điểm nhận hàng nào gộp đợc với new_package không
@@ -468,6 +641,8 @@ def findLocationForDropPackage(new_solution, index_truck, drop_package):
             
         new_solution[0][index_truck][index][1] += [drop_package]
         if index != 0:
+            # print("before:")
+            # print(new_solution)
             # new_solution, successed = groupToATrip(new_solution, [drop_package], index_truck, index)
             new_solution, number_in_the_drone_queue_of_drop_package, index_in_trip = addNewTripInDroneRoute(new_solution, [drop_package], index_truck, index)
     return new_solution  
@@ -580,7 +755,8 @@ def one_opt_and_change_truck_route_after(solution, truck_time):
                         # Tìm nơi nhận hàng mới cho từng drop_package
                         # Xét từng góp hàng trong drop package
                         for mm in range(len(drop_package)):
-                            new_solution = findIndexOfDropPackage(new_solution, solution, city_change, truck_time, i, j, k, l, drop_package[mm])
+                            # new_solution = findIndexOfDropPackage(new_solution, solution, city_change, truck_time, i, j, k, l, drop_package[mm])
+                            new_solution = findLocationForDropPackage(new_solution, i, drop_package[mm])
                     # New
                     # print("-----")    
                     # print(new_solution[0])
@@ -790,14 +966,15 @@ def Neighborhood_combine_truck_and_drone_neighborhood_with_tabu_list(name_of_tru
         sol = copy.deepcopy(potential_solution[i])
         min_to_improve = potential_solution[i][1][0]
         # list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_group_trip]
-        list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_change_index_trip, Neighborhood_drone.Neighborhood_group_trip]       
+        # list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_change_index_trip]       
+        list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus, Neighborhood_drone.Neighborhood_change_index_trip]       
         while j < number_of_loop_drone:
             j += 1
             # print("i: ",i," j: ", j)
             # print(sol[0])
             for k in range(len(list_neighborhood)):
                 if k == 0:
-                    drone_neighborhood = list_neighborhood[k](sol[0], list_accept_truck)
+                    drone_neighborhood = list_neighborhood[k](sol[0])
                 else:
                     drone_neighborhood = list_neighborhood[k](sol[0])
                 min_in_loop = 1000000
@@ -1021,47 +1198,31 @@ def Neighborhood_combine_truck_and_drone_neighborhood_with_package(name_of_truck
             consider = True
             potential_solution.pop()
         
-        # if use_solution_pack:
-        #     if consider:
-        #         have_same_shape = False
-        #         for jjj in range(len(solution_pack)):
-        #             if Function.Compare_two_solution_2(current_neighborhood[i][0], solution_pack[jjj][0]):
-        #                 have_same_shape = True
-        #                 if current_neighborhood[i][1][0] < solution_pack[jjj][1][0]:
-        #                     add_solution = copy.deepcopy(current_neighborhood[i])
-        #                     solution_pack[jjj] = add_solution
-        #                 break
-        #         if not have_same_shape:
-        #             num1 = len(solution_pack)
-        #             while num1 != 0:
-        #                 if current_neighborhood[i][1][0] < solution_pack[num1-1][1][0]:
-        #                     num1 -= 1
-        #                 else:
-        #                     break
-        #             add_solution = copy.deepcopy(current_neighborhood[i])
-        #             solution_pack.insert(num1, add_solution)
-        #             if len(solution_pack) > solution_pack_len:
-        #                 solution_pack.pop()
     if len(solution_pack) != 0:
         min_solution_pack = solution_pack[-1][1][0]
     else:
         min_solution_pack = 10000000000
-    if len(potential_solution) != 0:                      
+        
+    if len(potential_solution) != 0:
         if index_consider_elite_set < solution_pack_len:
             if potential_solution[0][1][0] - min_solution_pack < epsilon:
                 have_same_shape = False
                 for jjj in range(len(solution_pack)):
-                    if jjj + 1 > index_consider_elite_set:
-                        if Function.Compare_two_solution_2(potential_solution[0][0], solution_pack[jjj][0]):
-                            have_same_shape = True
-                            if potential_solution[0][1][0] < solution_pack[jjj][1][0]:
+                    if Function.Compare_two_solution_2(potential_solution[0][0], solution_pack[jjj][0]):
+                        have_same_shape = True
+                        if jjj + 1 > index_consider_elite_set:
+                            if potential_solution[0][1][0] < solution_pack[jjj][1][0] + epsilon:
                                 add_solution = copy.deepcopy(potential_solution[0])
                                 solution_pack[jjj] = add_solution
-                            break
+                                break
+                        else:
+                            if potential_solution[0][1][0] < solution_pack[jjj][1][0] + epsilon:
+                                have_same_shape = False
+                                
                 if not have_same_shape:
                     num1 = len(solution_pack)
                     while num1 > index_consider_elite_set:
-                        if potential_solution[0][1][0] < solution_pack[num1-1][1][0]:
+                        if potential_solution[0][1][0] < solution_pack[num1-1][1][0] + epsilon:
                             num1 -= 1
                         else:
                             break
@@ -1069,20 +1230,22 @@ def Neighborhood_combine_truck_and_drone_neighborhood_with_package(name_of_truck
                     solution_pack.insert(num1, add_solution)
                     if len(solution_pack) > solution_pack_len:
                         solution_pack.pop()
-            
+    
     for i in range(len(potential_solution)):
+        # print("-----", name_of_truck_neiborhood, "-----")
+        # print(potential_solution[i][0])
         j = 0
-        list_accept_truck = [potential_solution[i][3], potential_solution[i][4]]
         sol = copy.deepcopy(potential_solution[i])
         min_to_improve = potential_solution[i][1][0]
         # list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_group_trip]
-        list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_change_index_trip]
+        # list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_change_index_trip]
+        list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus, Neighborhood_drone.Neighborhood_change_index_trip]
 
         while j < number_of_loop_drone:
             j += 1
             for k in range(len(list_neighborhood)):
                 if k == 0:
-                    drone_neighborhood = list_neighborhood[k](sol[0], list_accept_truck)
+                    drone_neighborhood = list_neighborhood[k](sol[0])
                 else:
                     drone_neighborhood = list_neighborhood[k](sol[0])
                 min_in_loop = 100000000
@@ -1100,12 +1263,14 @@ def Neighborhood_combine_truck_and_drone_neighborhood_with_package(name_of_truck
                     elif cfnode - min_in_loop < epsilon:
                         next_index = l
                         min_in_loop = cfnode
-                sol = drone_neighborhood[next_index]
-        
+                
     return potential_solution, solution_pack
 
 def Neighborhood_combine_truck_and_drone_neighborhood_with_tabu_list_with_package(name_of_truck_neiborhood, solution, number_of_potial_solution, number_of_loop_drone, tabu_list, tabu_tenure, index_of_loop, best_fitness, kind_of_tabu_structure, need_truck_time, solution_pack, solution_pack_len, use_solution_pack, index_consider_elite_set):
+    # print("-----------------------------------------")
+    # print(solution)
     potential_solution = []
+    # print(solution)
     if need_truck_time:
         current_neighborhood = name_of_truck_neiborhood(solution, Function.fitness(solution)[1])
     else:
@@ -1140,54 +1305,11 @@ def Neighborhood_combine_truck_and_drone_neighborhood_with_tabu_list_with_packag
                 consider = True
                 potential_solution.pop()
                 
-        # if use_solution_pack:    
-        #     if consider:
-        #         have_same_shape = False
-        #         for jjj in range(len(solution_pack)):
-        #             if Function.Compare_two_solution_2(current_neighborhood[i][0], solution_pack[jjj][0]):
-        #                 have_same_shape = True
-        #                 if current_neighborhood[i][1][0] < solution_pack[jjj][1][0]:
-        #                     add_solution = copy.deepcopy(current_neighborhood[i])
-        #                     solution_pack[jjj] = add_solution
-        #                 break
-        #         if not have_same_shape:
-        #             num1 = len(solution_pack)
-        #             while num1 != 0:
-        #                 if current_neighborhood[i][1][0] < solution_pack[num1-1][1][0]:
-        #                     num1 -= 1
-        #                 else:
-        #                     break
-        #             add_solution = copy.deepcopy(current_neighborhood[i])
-        #             solution_pack.insert(num1, add_solution)
-        #             if len(solution_pack) > solution_pack_len:
-        #                 solution_pack.pop()
     if len(solution_pack) != 0:
         min_solution_pack = solution_pack[-1][1][0]
     else:
         min_solution_pack = 10000000000
-    # if len(potential_solution) != 0:
-    #     if index_consider_elite_set < solution_pack_len:
-    #         if potential_solution[0][1][0] - min_solution_pack < epsilon:
-    #             have_same_shape = False
-    #             for jjj in range(len(solution_pack)):
-    #                 if jjj + 1 > index_consider_elite_set:
-    #                     if Function.Compare_two_solution_2(potential_solution[0][0], solution_pack[jjj][0]):
-    #                         have_same_shape = True
-    #                         if potential_solution[0][1][0] < solution_pack[jjj][1][0]:
-    #                             add_solution = copy.deepcopy(potential_solution[0])
-    #                             solution_pack[jjj] = add_solution
-    #                         break
-    #             if not have_same_shape:
-    #                 num1 = len(solution_pack)
-    #                 while num1 > index_consider_elite_set:
-    #                     if potential_solution[0][1][0] < solution_pack[num1-1][1][0]:
-    #                         num1 -= 1
-    #                     else:
-    #                         break
-    #                 add_solution = copy.deepcopy(potential_solution[0])
-    #                 solution_pack.insert(num1, add_solution)
-    #                 if len(solution_pack) > solution_pack_len:
-    #                     solution_pack.pop()
+
     if len(potential_solution) != 0:
         if index_consider_elite_set < solution_pack_len:
             if potential_solution[0][1][0] - min_solution_pack < epsilon:
@@ -1217,26 +1339,34 @@ def Neighborhood_combine_truck_and_drone_neighborhood_with_tabu_list_with_packag
                     solution_pack.insert(num1, add_solution)
                     if len(solution_pack) > solution_pack_len:
                         solution_pack.pop()
-    restrict_next_loop = []
+        restrict_next_loop = []
+        for i in range(len(potential_solution)):
+            restrict_next_loop.append(potential_solution[i][2])
+          
+    # print("-----", name_of_truck_neiborhood, "-----")
+    # print(potential_solution[0][0])
+
     for i in range(len(potential_solution)):
-        restrict_next_loop.append(potential_solution[i][2])
-    for i in range(len(potential_solution)):
+        # print("-----", name_of_truck_neiborhood, "-----")
+        # print(potential_solution[i][0])
+        # print("--------")
+        # print(potential_solution[i][0][0])
+        # print(potential_solution[i][0][1])
         j = 0
         list_accept_truck = [potential_solution[i][3], potential_solution[i][4]]
         sol = copy.deepcopy(potential_solution[i])
         min_to_improve = potential_solution[i][1][0]
         # list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_group_trip]
-        # list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_change_index_trip, Neighborhood_drone.Neighborhood_group_trip]
-        list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_change_index_trip]             
+        # list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus_for_specific_truck, Neighborhood_drone.Neighborhood_change_index_trip, Neighborhood_drone.Neighborhood_group_trip]       
+        list_neighborhood = [Neighborhood_drone.Neighborghood_change_drone_route_max_pro_plus, Neighborhood_drone.Neighborhood_change_index_trip]       
         while j < number_of_loop_drone:
             j += 1
             # print("i: ",i," j: ", j)
             # print(sol[0])
             for k in range(len(list_neighborhood)):
-                if k == 0:
-                    drone_neighborhood = list_neighborhood[k](sol[0], list_accept_truck)
-                else:
-                    drone_neighborhood = list_neighborhood[k](sol[0])
+                # print(sol[0])
+                # print(k)
+                drone_neighborhood = list_neighborhood[k](sol[0])
                 min_in_loop = 1000000
                 next_index = 0
                 if len(drone_neighborhood) == 0:
@@ -1501,3 +1631,240 @@ def Neighborhood_combine_truck_and_drone_neighborhood_with_tabu_list_with_packag
         potential_solution[i][2] = restrict_next_loop[i]
     # print(restrict_next_loop)
     return potential_solution, solution_pack
+
+def Neighborhood_stack_two_truck_term(solution):
+    neighborhood = []
+    for i in range(len(solution[0])):
+        for j in range(1, len(solution[0][i])-1):
+            if solution[0][i][j][0] != 0:
+                continue
+            new_solution = copy.deepcopy(solution)
+            # print(new_solution)
+            # print(i)
+            # print(j)
+            new_solution = Stack_two_truck_term(new_solution, i, j)
+            
+            
+            # print("-------")
+            # print(new_solution[0][0])
+            # print(new_solution[1])
+            
+            pack_child = []
+            pack_child.append(new_solution)
+            a, b, c = Function.fitness(new_solution)
+            pack_child.append([a, b, c])
+            neighborhood.append(pack_child)
+    return neighborhood
+
+def Stack_two_truck_term(solution, index_truck, index_city):
+    
+    if solution[0][index_truck][index_city][0] != 0 or index_city == 0:
+        # print()
+
+        return solution
+    
+    pre_drop_package = []
+    drop_location = []
+    for i in range(len(solution[0][index_truck][index_city][1])):
+        pre_drop_package.append(solution[0][index_truck][index_city][1][i])
+    
+    solution[0][index_truck].pop(index_city)
+    
+    start_, end_ = Function.determine_start_end(solution, index_truck, solution[0][index_truck][index_city][0])
+
+    for i in reversed(range(start_, end_)):
+        city = solution[0][index_truck][i][0]
+        pre_drop_package.append(city)
+        if solution[0][index_truck][i][1] != []:
+            drop_location.append(solution[0][index_truck][i][0])
+        for j in reversed(range(len(solution[0][index_truck][i][1]))):
+            city_ = solution[0][index_truck][i][1][j]
+            if city_ not in pre_drop_package:
+                pre_drop_package.append(city_)
+            solution[0][index_truck][i][1].pop()   
+
+    # print("hehehee")
+    # print(drop_package)
+    for i in reversed(range(len(pre_drop_package))):
+        if pre_drop_package[i] == 0:
+            pre_drop_package.pop(i)
+    
+    drop_package = []
+    for i in range(len(solution[0][index_truck])):
+        city__ = solution[0][index_truck][i][0]
+        if city__ in pre_drop_package:
+            drop_package.append(city__)
+    
+    for i in range(len(drop_location)):
+        if drop_location[i] == 0:
+            drop_location.pop(i)
+            break
+    
+    for i in reversed(range(len(solution[1]))):
+        for j in reversed(range(len(solution[1][i]))):
+            city = solution[1][i][j][0]
+            if city in drop_location:
+                solution[1][i].pop(j)
+        if solution[1][i] == []:
+            solution[1].pop(i)
+    
+    
+    for i in range(len(solution[0][index_truck])):
+        for j in reversed(range(len(solution[0][index_truck][i][1]))):
+            city_ = solution[0][index_truck][i][1][j]
+            if city_ in drop_package:
+                solution[0][index_truck][i][1].pop(j)
+    
+    
+    for i in range(len(drop_package)):
+        solution = findLocationForDropPackage(solution, index_truck, drop_package[i])
+    
+    return solution
+
+def Neighborhood_split_two_truck_term(solution):
+    neighborhood = []
+    for i in range(len(solution[0])):
+        for j in range(1, len(solution[0][i])-1):
+            if solution[0][i][j][0] == 0 or solution[0][i][j+1][0] == 0:
+                continue
+            
+            new_solution = copy.deepcopy(solution)
+            new_solution = Split_two_truck_term(new_solution, i, j)
+            
+            
+            # print("-------")
+            # print(new_solution[0][0])
+            # print(new_solution[1])
+            
+            pack_child = []
+            pack_child.append(new_solution)
+            a, b, c = Function.fitness(new_solution)
+            pack_child.append([a, b, c])
+            neighborhood.append(pack_child)
+    return neighborhood
+
+def Split_two_truck_term(solution, index_truck, index_city):
+    
+    if solution[0][index_truck][index_city][0] == 0 or index_city == 0:
+        return solution
+    
+    solution[0][index_truck].insert(index_city + 1, [0, []])
+    
+    start_, end_ = Function.determine_start_end(solution, index_truck, solution[0][index_truck][index_city+2][0])
+    # print(start_, end_)
+    pre_drop_package = []
+    drop_location = []
+    
+    for i in reversed(range(start_, end_)):
+        city = solution[0][index_truck][i][0]
+        pre_drop_package.append(city)
+        if solution[0][index_truck][i][1] != []:
+            drop_location.append(solution[0][index_truck][i][0])
+        for j in reversed(range(len(solution[0][index_truck][i][1]))):
+            city_ = solution[0][index_truck][i][1][j]
+            if city_ not in pre_drop_package:
+                pre_drop_package.append(city_)
+            solution[0][index_truck][i][1].pop()
+    
+    start_1, end_1 = Function.determine_start_end(solution, index_truck, solution[0][index_truck][index_city][0])
+    
+    # print(start_1, end_1)
+    for i in range(len(solution[0][index_truck])):
+        for j in reversed(range(len(solution[0][index_truck][i][1]))):
+            city_ = solution[0][index_truck][i][1][j]
+            if city_ in pre_drop_package:
+                solution[0][index_truck][i][1].pop(j)
+    
+    
+    
+    pre_drop_package.remove(0)
+    # print(pre_drop_package)
+    drop_package = []
+    for i in range(start_1, end_):
+        city = solution[0][index_truck][i][0]
+        if city in pre_drop_package:
+            drop_package.append(city)
+    
+    for i in reversed(range(len(drop_package))):
+        if drop_package[i] == 0:
+            drop_package.pop(i)
+    
+    # print("hehehee")
+    # print(drop_package)
+    
+    for i in reversed(range(len(solution[1]))):
+        for j in reversed(range(len(solution[1][i]))):
+            for k in reversed(range(len(solution[1][i][j][1]))):
+                pack = solution[1][i][j][1][k]
+                if pack in drop_package:
+                    solution[1][i][j][1].pop(k)
+            if solution[1][i][j][1] == []:
+                solution[1][i].pop(j)  
+        if solution[1][i] == []:
+            solution[1].pop(i)
+        
+    for i in range(len(drop_package)):
+        solution = findLocationForDropPackage(solution, index_truck, drop_package[i])
+    
+    return solution
+
+def Turn_single_to_multi_trip(solution):
+    new_solution = copy.deepcopy(solution)
+    
+    # Split Term
+    for i in range(len(solution[0])):
+        for j in range(int(len(solution[0][i])/3) + 1):
+            a = random.random()
+            if a > 0.7:
+                neighborhood = Neighborhood_split_two_truck_term(solution)
+                if len(neighborhood) > 0:
+                    index_ = 0
+                    bfitness = neighborhood[0][1][0]
+                    for k in range(len(neighborhood)):
+                        cfitness = neighborhood[k][1][0]
+                        if cfitness + epsilon < bfitness:
+                            index_ = k
+                            bfitness = cfitness
+                    
+                    new_solution = neighborhood[index_][0]
+                    
+    # Group Term
+    for i in range(len(solution[0])):
+        for j in range(int(len(solution[0][i])/3) + 1):
+            a = random.random()
+            if a > 0.9:
+                neighborhood = Neighborhood_stack_two_truck_term(solution)
+                if len(neighborhood) > 0:
+                    index_ = 0
+                    bfitness = neighborhood[0][1][0]
+                    for k in range(len(neighborhood)):
+                        cfitness = neighborhood[k][1][0]
+                        if cfitness + epsilon < bfitness:
+                            index_ = k
+                            bfitness = cfitness
+                    
+                    new_solution = neighborhood[index_][0]
+    
+    return new_solution
+
+def Turn_single_to_k_trip(solution, k):
+    new_solution = copy.deepcopy(solution)
+    
+    for pp in range(k):
+        neighborhood = Neighborhood_split_two_truck_term(new_solution)
+        if len(neighborhood) > 0:
+            index_ = 0
+            bfitness = neighborhood[0][1][0]
+            for k in range(len(neighborhood)):
+                cfitness = neighborhood[k][1][0]
+                if cfitness + epsilon < bfitness:
+                    index_ = k
+                    bfitness = cfitness
+            
+            new_solution = neighborhood[index_][0]
+    for i in range(len(new_solution[0])):
+        for j in range(len(new_solution[0][i])):
+            for k in reversed(range(len(new_solution[0][i][j][1]))):
+                if new_solution[0][i][j][1][k] == 0:
+                    new_solution[0][i][j][1].pop(k)
+    return new_solution

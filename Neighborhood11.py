@@ -351,12 +351,14 @@ def two_swap(solution, truck_time):
 
     return neighbors
 
-def Neighborhood_move_1_1_ver2(solution):
+def Neighborhood_move_1_1_standard(solution):
     neighborhood = []
     for i in range(len(solution[0])):
         for j in range(1, len(solution[0][i])):
             for k in range(len(solution[0])):
                 for l in range(1, len(solution[0][k])):
+                    if solution[0][i][j][0] == 0 or solution[0][k][l][0] == 0:
+                        continue
                     if i == k and j == l:
                         continue
                     new_solution = copy.deepcopy(solution)
@@ -430,6 +432,8 @@ def Neighborhood_move_1_1_ver2(solution):
                     # print("---------------------------") 
                     
                     pack_child = []
+                    # print("------------------")
+                    # print(new_solution)
                     pack_child.append(new_solution)
                     a, b, c = Function.fitness(new_solution)                
                     pack_child.append([a, b, c])
@@ -508,7 +512,10 @@ def Neighborhood_move_2_1(solution):
         for j in range(1, len(solution[0][i]) - 1):
             for k in range(len(solution[0])):
                 for l in range(1, len(solution[0][k])):
-                    if i == k and (j == l or j - 1 == l or j == l - 1):
+                    if solution[0][i][j][0] == 0 or solution[0][i][j+1][0] == 0 or solution[0][k][l][0] == 0:
+                        continue
+                    # if i == k and (j == l or j - 1 == l or j == l - 1):
+                    if i == k and (j == l  or j == l - 1):
                         continue
                     new_solution = copy.deepcopy(solution)
                     city_change1 = solution[0][i][j][0]
@@ -606,7 +613,7 @@ def Neighborhood_move_2_1(solution):
                                 pack = new_solution[0][k][ii][1][jj]
                                 if pack in pre_drop_package:
                                     new_solution[0][k][ii][1].pop(jj)
-                    
+                    # print(new_solution)
                     for ii in range(len(drop_package1)):
                         new_solution = Neighborhood.findLocationForDropPackage(new_solution, i, drop_package1[ii])
                     if i != k:
@@ -627,6 +634,9 @@ def Neighborhood_move_2_1(solution):
                     pack_child.append(i)
                     pack_child.append(k)
                     neighborhood.append(pack_child)
+                    # print("------------------")
+                    # print(new_solution)
+                    # print(a)
                     
     return neighborhood
 
@@ -636,12 +646,18 @@ def Neighborhood_two_opt_tue(solution):
         for j in range(1, len(solution[0][i]) - 1):
             for k in range(i + 1, len(solution[0])):
                 for l in range(1, len(solution[0][k]) - 1):
+                    if solution[0][i][j+1][0] == 0 and solution[0][k][l][0] == 0:
+                        continue
+                    if solution[0][i][j][0] == 0 and solution[0][k][l+1][0] == 0:
+                        continue
                     new_solution = copy.deepcopy(solution)
                     pre_drop_package = []
                     drop_city = []
                     for ii in range(j + 1, len(new_solution[0][i])):
-                        pre_drop_package.append(new_solution[0][i][ii][0])
-                        drop_city.append(new_solution[0][i][ii][0])
+                        city_ = new_solution[0][i][ii][0]
+                        if city_ != 0:
+                            drop_city.append(city_)
+                            pre_drop_package.append(city_)
                         for jj in range(len(new_solution[0][i][ii][1])):
                             city = new_solution[0][i][ii][1][jj]
                             if city not in pre_drop_package:
@@ -649,8 +665,10 @@ def Neighborhood_two_opt_tue(solution):
                         new_solution[0][i][ii][1] = []
                                 
                     for ii in range(l + 1, len(new_solution[0][k])):
-                        drop_city.append(new_solution[0][k][ii][0])
-                        pre_drop_package.append(new_solution[0][k][ii][0])
+                        city_ = new_solution[0][k][ii][0]
+                        if city_ != 0:
+                            drop_city.append(city_)
+                            pre_drop_package.append(city_)
                         for jj in range(len(new_solution[0][k][ii][1])):
                             city = new_solution[0][k][ii][1][jj]
                             if city not in pre_drop_package:
@@ -713,7 +731,10 @@ def Neighborhood_two_opt_tue(solution):
                     # print(Function.Check_if_feasible(new_solution))
                     # print(len(neighborhood))
                     # print("---------------------------") 
-                    
+                    # print(new_solution[0][0])
+                    # print(new_solution[0][1])
+                    # print(new_solution[1])
+
                     pack_child = []
                     pack_child.append(new_solution)
                     a, b, c = Function.fitness(new_solution)                
