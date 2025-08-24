@@ -12,9 +12,10 @@ jobs:
     strategy:
       matrix:
         center: ["border", "center", "outside"]
-        data_set: ["U_40_0.5_Num_1.txt", "U_40_0.5_Num_2.txt", "U_40_0.5_Num_3.txt", "U_40_0.5_Num_4.txt", "U_40_0.5_Num_5.txt", 
-                "U_40_1.0_Num_1.txt", "U_40_1.0_Num_2.txt", "U_40_1.0_Num_3.txt", "U_40_1.0_Num_4.txt", "U_40_1.0_Num_5.txt", 
-                "U_40_1.5_Num_1.txt", "U_40_1.5_Num_2.txt", "U_40_1.5_Num_3.txt", "U_40_1.5_Num_4.txt", "U_40_1.5_Num_5.txt"]
+        data_set: ["U_50_0.5_Num_1.txt", "U_50_0.5_Num_2.txt", "U_50_0.5_Num_3.txt", "U_50_0.5_Num_4.txt", "U_50_0.5_Num_5.txt", 
+                "U_50_1.0_Num_1.txt", "U_50_1.0_Num_2.txt", "U_50_1.0_Num_3.txt", "U_50_1.0_Num_4.txt", "U_50_1.0_Num_5.txt", 
+                "U_50_1.5_Num_1.txt", "U_50_1.5_Num_2.txt", "U_50_1.5_Num_3.txt", "U_50_1.5_Num_4.txt", "U_50_1.5_Num_5.txt"]
+
 
     steps:
       - name: Checkout repository
