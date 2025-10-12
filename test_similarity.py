@@ -34,7 +34,7 @@ LOOP_IMPROVED = 0
 SET_LAST_10 = [] 
 BEST = []
 # 
-number_of_cities = int(os.getenv('NUMBER_OF_CITIES', 20)) 
+number_of_cities = int(os.getenv('NUMBER_OF_CITIES', 30)) 
 delta = Data.delta
 alpha = Data.alpha
 theta = Data.theta
@@ -445,7 +445,8 @@ def Tabu_search_for_CVRP(CC):
     return best_fitness, best_sol, data_to_write
 
 # Thư mục chứa các file .txt
-folder_path = "test_data/Smith/TSPrd(time)/Solomon/"+str(number_of_cities)
+folder_path = "test_data/data_demand_random/"+str(number_of_cities)
+
 # folder_path = "test_data/Smith/TSPrd(time)/Solomon/"+str(number_of_cities)
 # folder_path = "test_data\\Smith\\TSPrd(time)\\Solomon\\50\\0_5TSP_50"
 # folder_path = "test_data\\Smith\\TSPrd(time)\\Solomon\\15"
@@ -472,7 +473,10 @@ for txt_file in txt_files:
         # log_file_path = os.path.join(log_folder, log)
         # log_file = open(log_file_path, 'w')
         # sys.stdout = log_file
-        Data.read_data_random(txt_file)
+       # Data.read_data_random(txt_file) 
+        Data.read_data_random_fixeDemandEqual1(txt_file)
+        
+        
         result = []
         run_time = []
         avg = 0
