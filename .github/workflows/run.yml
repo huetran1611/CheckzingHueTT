@@ -1,0 +1,61 @@
+name: Workflow name
+
+on: push
+ 
+permissions:
+  contents: read
+ 
+jobs:
+  test:
+    name: Run test with multiple configurations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        center: ["border", "center", "outside"]
+        data_set: ["U_10_0.5_Num_1.txt", "U_10_0.5_Num_2.txt", "U_10_0.5_Num_3.txt", "U_10_0.5_Num_4.txt", "U_10_0.5_Num_5.txt", 
+                "U_10_1.0_Num_1.txt", "U_10_1.0_Num_2.txt", "U_10_1.0_Num_3.txt", "U_10_1.0_Num_4.txt", "U_10_1.0_Num_5.txt", 
+                "U_10_1.5_Num_1.txt", "U_10_1.5_Num_2.txt", "U_10_1.5_Num_3.txt", "U_10_1.5_Num_4.txt", "U_10_1.5_Num_5.txt"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+        
+      - name: Run main.py ITE-2
+        run: python main_adaptive3.py
+        env:
+          CENTER: ${{ matrix.center }}
+          DATA_SET: ${{ matrix.data_set }}
+      - name: Upload result Excel file as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: excel-results-${{ matrix.center }}-${{ matrix.data_set }}  # Thêm iteration vào tên file
+          path: Results_*_CL1.json
+
+  summary:
+    name: Summary results
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          merge-multiple: true
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: excel-results-summary
+          path: Results_*_CL1.json 

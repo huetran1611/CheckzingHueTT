@@ -1,0 +1,67 @@
+name: Workflow name
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run test with multiple configurations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        center: ["outside"]
+        center: ["border", "center", "outside"]
+
+        data_set: ["U_40_0.5_Num_1.txt", "U_40_0.5_Num_2.txt", "U_40_0.5_Num_3.txt", "U_40_0.5_Num_4.txt", "U_40_0.5_Num_5.txt", "U_40_0.5_Num_6.txt", "U_40_0.5_Num_7.txt", "U_40_0.5_Num_8.txt", "U_40_0.5_Num_9.txt", "U_40_0.5_Num_10.txt", 
+                  "U_40_1.0_Num_1.txt", "U_40_1.0_Num_2.txt", "U_40_1.0_Num_3.txt", "U_40_1.0_Num_4.txt", "U_40_1.0_Num_5.txt", "U_40_1.0_Num_6.txt", "U_40_1.0_Num_7.txt", "U_40_1.0_Num_8.txt", "U_40_1.0_Num_9.txt", "U_40_1.0_Num_10.txt", 
+                  "U_40_1.5_Num_1.txt", "U_40_1.5_Num_2.txt", "U_40_1.5_Num_3.txt", "U_40_1.5_Num_4.txt", "U_40_1.5_Num_5.txt", "U_40_1.5_Num_6.txt", "U_40_1.5_Num_7.txt", "U_40_1.5_Num_8.txt", "U_40_1.5_Num_9.txt", "U_40_1.5_Num_10.txt"]
+        data_set: ["U_20_0.5_Num_1.txt", "U_20_0.5_Num_2.txt", "U_20_0.5_Num_3.txt", "U_20_0.5_Num_4.txt", "U_20_0.5_Num_5.txt", 
+                "U_20_1.0_Num_1.txt", "U_20_1.0_Num_2.txt", "U_20_1.0_Num_3.txt", "U_20_1.0_Num_4.txt", "U_20_1.0_Num_5.txt", 
+                "U_20_1.5_Num_1.txt", "U_20_1.5_Num_2.txt", "U_20_1.5_Num_3.txt", "U_20_1.5_Num_4.txt", "U_20_1.5_Num_5.txt"]
+        data_set: ["U_100_1.0_Num_1.txt", "U_100_1.0_Num_2.txt", "U_100_1.0_Num_3.txt", "U_100_1.0_Num_4.txt", "U_100_1.0_Num_5.txt", "U_100_1.0_Num_6.txt", "U_100_1.0_Num_7.txt", "U_100_1.0_Num_8.txt", "U_100_1.0_Num_9.txt", "U_100_1.0_Num_10.txt",
+                    "U_75_1.0_Num_1.txt", "U_75_1.0_Num_2.txt", "U_75_1.0_Num_3.txt", "U_75_1.0_Num_4.txt", "U_75_1.0_Num_5.txt", "U_75_1.0_Num_6.txt", "U_75_1.0_Num_7.txt", "U_75_1.0_Num_8.txt", "U_75_1.0_Num_9.txt", "U_75_1.0_Num_10.txt"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+        
+      - name: Run main.py ITE-2
+        run: python main_adaptive2.py
+        env:
+          CENTER: ${{ matrix.center }}
+          DATA_SET: ${{ matrix.data_set }}
+      - name: Upload result Excel file as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: excel-results-${{ matrix.center }}-${{ matrix.data_set }}  # Thêm iteration vào tên file
+          path: Random_*_CL1.xlsx
+
+  summary:
+    name: Summary results
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          merge-multiple: true
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: excel-results-summary
+          path: Random_*_CL1.xlsx 
