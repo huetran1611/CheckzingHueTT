@@ -454,8 +454,10 @@ folder_path = "test_data/data_demand_random/"+str(number_of_cities)
 # txt_files = glob.glob(os.path.join(folder_path, "*0.5.dat")) + \
 #             glob.glob(os.path.join(folder_path, "*2.dat")) + \
 #             glob.glob(os.path.join(folder_path, "*3.dat"))
-txt_files = glob.glob(os.path.join(folder_path, data_set))
+#txt_files = glob.glob(os.path.join(folder_path, data_set))
 # txt_files = ["test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_1.dat", "test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_2.5.dat", "test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_2.dat", "test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_3.dat"]
+txt_files = [r"D:\HueTT\prepare for Phd\problem 4_ resupply\code_heuristic\CheckzingHueTT\test_data\data_new\6.dat"]
+#test_data\data_new\C101_0.5_MR15_autotuned.dat
 # Tạo một tệp Excel mới
 workbook = openpyxl.Workbook()
 sheet = workbook.active
@@ -473,7 +475,7 @@ for txt_file in txt_files:
         # log_file = open(log_file_path, 'w')
         # sys.stdout = log_file
         #Data.read_data_random(txt_file)
-        Data.read_data_random_fixeDemandEqual1(txt_file)
+        Data.read_data_random(txt_file)
         result = []
         run_time = []
         avg = 0
@@ -511,5 +513,6 @@ for txt_file in txt_files:
                 sheet.cell(row=row, column=column+1, value=str(best_csv_sol))
             sheet.cell(row=row, column=column+2, value=data_to_write["Best_T"])
             sheet.cell(row=row, column=column+3, value=data_to_write["END"])
-            workbook.save(f"Random_{number_of_cities}_{data_set}_{SEGMENT}_iter-_{ite}_CL2.xlsx")
+            #workbook.save(f"Random_{number_of_cities}_{data_set}_{SEGMENT}_iter-_{ite}_CL2.xlsx")
+            workbook.save(f"result//{time.time()}_{txt_files[:-4]}.xlsx")
             workbook.close()
