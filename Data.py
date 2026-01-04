@@ -7,15 +7,13 @@ import time
 import itertools
 import collections
 import os
-number_of_trucks = 2
+number_of_trucks = 3
 number_of_cities = 0
 number_of_drones = 4
-=======
-number_of_drones = 1
->>>>>>> 8bca72852e4fee50eeca26723b019d36555dc6ad
+
 truck_speed = 0.5
 drone_speed = 1
-drone_capacity = 8
+drone_capacity = 4
 drone_limit_time = 90
 city_demand = []
 release_date = []
