@@ -9,7 +9,7 @@ import collections
 import os
 number_of_trucks = 3
 number_of_cities = 0
-number_of_drones = 10
+number_of_drones = 1
 
 truck_speed = 0.5
 drone_speed = 1
