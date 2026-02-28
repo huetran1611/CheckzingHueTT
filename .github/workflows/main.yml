@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        number_of_cities: [100]
+        number_of_cities: [30,50]
         segment: [4]
         iteration: [1,2,3]
         data_set: ["C101_0.5.dat","C101_1.dat","C101_1.5.dat", "C101_2.dat", "C101_2.5.dat", "C101_3.dat", 
