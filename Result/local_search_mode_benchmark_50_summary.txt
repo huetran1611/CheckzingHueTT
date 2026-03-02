@@ -1,0 +1,8 @@
+Benchmark on 50 instances (24 from size-10, 24 from size-20, first 2 from size-30)
+Reference mode for gaps: all3
+
+all3: avg_fitness=456.7444, avg_runtime_s=0.103742, avg_quality_gap_vs_all3_pct=0.0000, avg_time_save_vs_all3_pct=0.00
+relocation: avg_fitness=455.4981, avg_runtime_s=0.104484, avg_quality_gap_vs_all3_pct=-0.2401, avg_time_save_vs_all3_pct=12.04
+index_trip: avg_fitness=486.2000, avg_runtime_s=0.000178, avg_quality_gap_vs_all3_pct=6.0297, avg_time_save_vs_all3_pct=99.53
+group_trip: avg_fitness=486.2000, avg_runtime_s=0.000551, avg_quality_gap_vs_all3_pct=6.0297, avg_time_save_vs_all3_pct=98.55
+none: avg_fitness=486.2000, avg_runtime_s=0.000001, avg_quality_gap_vs_all3_pct=6.0297, avg_time_save_vs_all3_pct=100.00
