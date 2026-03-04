@@ -1,6 +1,7 @@
 import argparse
 import ast
 import copy
+import random
 from collections import Counter
 from functools import lru_cache
 
@@ -39,6 +40,10 @@ def trip_demand(trip):
     return sum(Data.city_demand[pkg] for stop in trip for pkg in stop[1])
 
 
+def count_multi_visits(queue):
+    return sum(1 for trip in queue if len(trip) >= 2)
+
+
 def validate_and_summarize(solution):
     feasibility = Function.Check_if_feasible(solution)
     fitness_value, _, _ = Function.fitness(solution)
@@ -55,6 +60,7 @@ def validate_and_summarize(solution):
 
     print(f"Feasible (Check_if_feasible): {feasibility}")
     print(f"Fitness: {fitness_value}")
+    print(f"Multi-visit trips: {count_multi_visits(solution[1])}")
     print(f"Customers served: {len(served)}")
     print(f"Unique customers served: {len(set(served))}")
     print(f"Missing customers: {missing}")
@@ -92,7 +98,7 @@ def maximize_multi_resupply(solution):
     @lru_cache(None)
     def dp(i, j):
         if i == len(seq[0]) and j == len(seq[1]):
-            return (0, 0, [])  # pair_count, covered_in_pairs, trips
+            return (0, 0, [])
 
         best = (-10**9, -10**9, None)
 
@@ -128,6 +134,111 @@ def maximize_multi_resupply(solution):
     return improved, pair_count, covered_in_pairs
 
 
+def build_truck_map(solution):
+    truck_of_city = {}
+    for truck_idx, truck_route in enumerate(solution[0]):
+        for city, _ in truck_route:
+            truck_of_city[city] = truck_idx
+    return truck_of_city
+
+
+def trip_structure_ok(solution, trip, truck_of_city):
+    trucks = [truck_of_city[stop[0]] for stop in trip]
+    if len(trucks) != len(set(trucks)):
+        return False
+    if trip_demand(trip) > Data.drone_capacity:
+        return False
+    if trip_time(solution, trip) > Data.drone_limit_time:
+        return False
+    return True
+
+
+def mutate_queue(queue, solution, truck_of_city, rng):
+    q = copy.deepcopy(queue)
+    if not q:
+        return q
+    action = rng.choice(["swap", "merge", "split", "move"])
+
+    if action == "swap" and len(q) >= 2:
+        i, j = rng.sample(range(len(q)), 2)
+        q[i], q[j] = q[j], q[i]
+
+    elif action == "merge":
+        singles = [i for i, t in enumerate(q) if len(t) == 1]
+        if len(singles) >= 2:
+            i, j = sorted(rng.sample(singles, 2), reverse=True)
+            a = q[i][0]
+            b = q[j][0]
+            for trip in ([a, b], [b, a]):
+                if trip_structure_ok(solution, trip, truck_of_city):
+                    q.pop(i)
+                    q.pop(j)
+                    q.insert(rng.randrange(len(q) + 1), trip)
+                    break
+
+    elif action == "split":
+        multi = [i for i, t in enumerate(q) if len(t) >= 2]
+        if multi:
+            i = rng.choice(multi)
+            trip = q.pop(i)
+            rng.shuffle(trip)
+            for stop in trip:
+                q.insert(rng.randrange(len(q) + 1), [stop])
+
+    elif action == "move":
+        src = [i for i, t in enumerate(q) if len(t) == 1]
+        dst = [i for i, t in enumerate(q) if len(t) == 1]
+        if src and len(dst) >= 2:
+            i = rng.choice(src)
+            stop = q[i][0]
+            candidates = [j for j in dst if j != i and truck_of_city[q[j][0][0]] != truck_of_city[stop[0]]]
+            if candidates:
+                j = rng.choice(candidates)
+                merged = [stop, q[j][0]]
+                if trip_structure_ok(solution, merged, truck_of_city):
+                    if i > j:
+                        i, j = j, i
+                    q.pop(j)
+                    q.pop(i)
+                    q.insert(rng.randrange(len(q) + 1), merged)
+    return q
+
+
+def search_better_with_multi_visit(solution, iterations, seed):
+    rng = random.Random(seed)
+    truck_of_city = build_truck_map(solution)
+
+    base_fit, _, _ = Function.fitness(solution)
+    base_multi = count_multi_visits(solution[1])
+
+    current_q = copy.deepcopy(solution[1])
+    best_solution = None
+    best_metric = None
+
+    for _ in range(iterations):
+        candidate_q = mutate_queue(current_q, solution, truck_of_city, rng)
+        candidate = [copy.deepcopy(solution[0]), candidate_q]
+        if not Function.Check_if_feasible(candidate):
+            continue
+
+        fit, _, _ = Function.fitness(candidate)
+        multi = count_multi_visits(candidate_q)
+
+        if multi > base_multi and fit < base_fit:
+            metric = (fit, -multi)
+            if best_metric is None or metric < best_metric:
+                best_metric = metric
+                best_solution = copy.deepcopy(candidate)
+
+        # keep a lightweight hill-climb state
+        cur_fit, _, _ = Function.fitness([copy.deepcopy(solution[0]), current_q])
+        cur_multi = count_multi_visits(current_q)
+        if (multi > cur_multi) or (multi == cur_multi and fit < cur_fit):
+            current_q = candidate_q
+
+    return best_solution, base_fit, base_multi
+
+
 def main():
     parser = argparse.ArgumentParser(description="Validate a truck-drone solution.")
     parser.add_argument("--instance", required=True, help="Path to .dat instance file")
@@ -138,10 +249,17 @@ def main():
     parser.add_argument("--drone-speed", type=float, default=1.0, help="Drone speed")
     parser.add_argument("--trucks", type=int, default=None, help="Override number of trucks")
     parser.add_argument("--drones", type=int, default=None, help="Override number of drones")
+    parser.add_argument("--iterations", type=int, default=20000, help="Iterations for search mode")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for search mode")
     parser.add_argument(
         "--maximize-multi-resupply",
         action="store_true",
         help="Try to maximize number of drone trips with >=2 resupply stops (different trucks).",
+    )
+    parser.add_argument(
+        "--search-better-multi-visit",
+        action="store_true",
+        help="Run iterative transformations and search for solution with more multi-visits and better fitness.",
     )
     args = parser.parse_args()
 
@@ -166,6 +284,17 @@ def main():
         print(f"Multi-resupply trips (>=2 stops): {pair_count}")
         print(f"Stops covered inside multi-resupply trips: {covered_in_pairs}")
         print(f"Improved drone queue: {improved[1]}")
+
+    if args.search_better_multi_visit:
+        best, base_fit, base_multi = search_better_with_multi_visit(solution, args.iterations, args.seed)
+        print("\n=== Search result (better fitness + more multi-visit) ===")
+        if best is None:
+            print("No solution found that improves BOTH fitness and multi-visit count in given iterations.")
+            print(f"Baseline fitness: {base_fit}")
+            print(f"Baseline multi-visit trips: {base_multi}")
+        else:
+            validate_and_summarize(best)
+            print(f"Found solution: {best}")
 
 
 if __name__ == "__main__":
