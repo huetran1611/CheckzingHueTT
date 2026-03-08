@@ -1151,7 +1151,13 @@ def fitness(solution):
         drone_queue.put((end, drone[1]))
         '''print(drone[1], "flight from", truck_position[position[-1]][truck_current_point[position[-1]]], "to 0")
         print("nah",truck_time)'''
-    value = max(truck_time)
+    # System completion time: all trucks and all drones must be back at depot.
+    drone_finish_time = 0
+    while not drone_queue.empty():
+        available_time, _ = drone_queue.get()
+        if available_time > drone_finish_time:
+            drone_finish_time = available_time
+    value = max(max(truck_time), drone_finish_time)
     return value, data_truck, sum(truck_time)
 
 def cal_truck_time(solution):
