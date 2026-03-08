@@ -48,6 +48,7 @@ fake_numpy.random = _RandomShim()
 sys.modules['numpy'] = fake_numpy
 
 import Data
+import Function
 import test_similarity
 
 INSTANCES = [
@@ -93,6 +94,79 @@ def _extract_drone_trip_lists(solution):
     return all_trips
 
 
+def _extract_drone_trip_launch_points(solution):
+    if not solution or not isinstance(solution, list) or len(solution) < 2:
+        return []
+    trips = solution[1]
+    if not isinstance(trips, list):
+        return []
+
+    launch_trips = []
+    for trip in trips:
+        if not isinstance(trip, list):
+            continue
+        launches = []
+        for leg in trip:
+            if not isinstance(leg, list) or len(leg) < 1:
+                continue
+            launch_city = leg[0]
+            if isinstance(launch_city, int):
+                launches.append(launch_city)
+        launch_trips.append(launches)
+    return launch_trips
+
+
+def _calc_single_trip_distance(launch_points):
+    if not launch_points:
+        return 0.0
+
+    # Keep the same nearest-neighbor visiting logic used in feasibility checks.
+    remaining = list(launch_points)
+    route = []
+    current = 0
+    while remaining:
+        next_point = min(remaining, key=lambda c: Data.euclid_flight_matrix[current][c])
+        route.append(next_point)
+        remaining.remove(next_point)
+        current = next_point
+
+    distance = Data.euclid_flight_matrix[0][route[0]] + Data.euclid_flight_matrix[route[-1]][0]
+    for i in range(len(route) - 1):
+        distance += Data.euclid_flight_matrix[route[i]][route[i + 1]]
+    return float(distance)
+
+
+def calc_drone_trip_distances(solution):
+    launch_trips = _extract_drone_trip_launch_points(solution)
+    if not launch_trips:
+        return [], None
+
+    distances = [_calc_single_trip_distance(points) for points in launch_trips]
+    if not distances:
+        return [], None
+
+    avg_distance = sum(distances) / len(distances)
+    return distances, avg_distance
+
+
+def calc_wait_stats(solution):
+    if solution is None:
+        return {}, {}, None, None
+
+    truck_wait_by_point = Function.cal_truck_wait_time_by_point(solution)
+    drone_wait_by_point = Function.cal_drone_wait_time_by_point(solution)
+
+    truck_avg_wait = None
+    drone_avg_wait = None
+
+    if truck_wait_by_point:
+        truck_avg_wait = sum(truck_wait_by_point.values()) / len(truck_wait_by_point)
+    if drone_wait_by_point:
+        drone_avg_wait = sum(drone_wait_by_point.values()) / len(drone_wait_by_point)
+
+    return truck_wait_by_point, drone_wait_by_point, truck_avg_wait, drone_avg_wait
+
+
 def calc_drone_trip_stats(solution):
     trips = _extract_drone_trip_lists(solution)
     if not trips:
@@ -132,8 +206,20 @@ def run_one_task(task):
             "best_multi_visit_sol": "",
             "best_sol_avg_customers_per_drone_trip": "",
             "best_sol_avg_demand_per_drone_trip": "",
+            "best_sol_drone_trip_distances": "",
+            "best_sol_avg_distance_per_drone_trip": "",
+            "best_sol_truck_wait_by_point": "",
+            "best_sol_drone_wait_by_point": "",
+            "best_sol_avg_truck_wait_by_point": "",
+            "best_sol_avg_drone_wait_by_point": "",
             "best_multi_visit_sol_avg_customers_per_drone_trip": "",
             "best_multi_visit_sol_avg_demand_per_drone_trip": "",
+            "best_multi_visit_sol_drone_trip_distances": "",
+            "best_multi_visit_sol_avg_distance_per_drone_trip": "",
+            "best_multi_visit_sol_truck_wait_by_point": "",
+            "best_multi_visit_sol_drone_wait_by_point": "",
+            "best_multi_visit_sol_avg_truck_wait_by_point": "",
+            "best_multi_visit_sol_avg_drone_wait_by_point": "",
             "status": "DATA_NOT_FOUND",
             "runtime_sec": round(time.time() - t0, 3),
         }
@@ -152,6 +238,10 @@ def run_one_task(task):
 
         best_avg_cust, best_avg_demand = calc_drone_trip_stats(best_sol)
         mv_avg_cust, mv_avg_demand = calc_drone_trip_stats(best_multi_visit_sol)
+        best_distances, best_avg_distance = calc_drone_trip_distances(best_sol)
+        mv_distances, mv_avg_distance = calc_drone_trip_distances(best_multi_visit_sol)
+        best_truck_wait, best_drone_wait, best_avg_truck_wait, best_avg_drone_wait = calc_wait_stats(best_sol)
+        mv_truck_wait, mv_drone_wait, mv_avg_truck_wait, mv_avg_drone_wait = calc_wait_stats(best_multi_visit_sol)
 
         return {
             "instance": instance,
@@ -165,8 +255,20 @@ def run_one_task(task):
             "best_multi_visit_sol": str(best_multi_visit_sol),
             "best_sol_avg_customers_per_drone_trip": None if best_avg_cust is None else round(best_avg_cust, 6),
             "best_sol_avg_demand_per_drone_trip": None if best_avg_demand is None else round(best_avg_demand, 6),
+            "best_sol_drone_trip_distances": str([round(v, 6) for v in best_distances]),
+            "best_sol_avg_distance_per_drone_trip": None if best_avg_distance is None else round(best_avg_distance, 6),
+            "best_sol_truck_wait_by_point": str({k: round(v, 6) for k, v in best_truck_wait.items()}),
+            "best_sol_drone_wait_by_point": str({k: round(v, 6) for k, v in best_drone_wait.items()}),
+            "best_sol_avg_truck_wait_by_point": None if best_avg_truck_wait is None else round(best_avg_truck_wait, 6),
+            "best_sol_avg_drone_wait_by_point": None if best_avg_drone_wait is None else round(best_avg_drone_wait, 6),
             "best_multi_visit_sol_avg_customers_per_drone_trip": None if mv_avg_cust is None else round(mv_avg_cust, 6),
             "best_multi_visit_sol_avg_demand_per_drone_trip": None if mv_avg_demand is None else round(mv_avg_demand, 6),
+            "best_multi_visit_sol_drone_trip_distances": str([round(v, 6) for v in mv_distances]),
+            "best_multi_visit_sol_avg_distance_per_drone_trip": None if mv_avg_distance is None else round(mv_avg_distance, 6),
+            "best_multi_visit_sol_truck_wait_by_point": str({k: round(v, 6) for k, v in mv_truck_wait.items()}),
+            "best_multi_visit_sol_drone_wait_by_point": str({k: round(v, 6) for k, v in mv_drone_wait.items()}),
+            "best_multi_visit_sol_avg_truck_wait_by_point": None if mv_avg_truck_wait is None else round(mv_avg_truck_wait, 6),
+            "best_multi_visit_sol_avg_drone_wait_by_point": None if mv_avg_drone_wait is None else round(mv_avg_drone_wait, 6),
             "status": "OK",
             "runtime_sec": round(time.time() - t0, 3),
         }
@@ -183,8 +285,20 @@ def run_one_task(task):
             "best_multi_visit_sol": "",
             "best_sol_avg_customers_per_drone_trip": "",
             "best_sol_avg_demand_per_drone_trip": "",
+            "best_sol_drone_trip_distances": "",
+            "best_sol_avg_distance_per_drone_trip": "",
+            "best_sol_truck_wait_by_point": "",
+            "best_sol_drone_wait_by_point": "",
+            "best_sol_avg_truck_wait_by_point": "",
+            "best_sol_avg_drone_wait_by_point": "",
             "best_multi_visit_sol_avg_customers_per_drone_trip": "",
             "best_multi_visit_sol_avg_demand_per_drone_trip": "",
+            "best_multi_visit_sol_drone_trip_distances": "",
+            "best_multi_visit_sol_avg_distance_per_drone_trip": "",
+            "best_multi_visit_sol_truck_wait_by_point": "",
+            "best_multi_visit_sol_drone_wait_by_point": "",
+            "best_multi_visit_sol_avg_truck_wait_by_point": "",
+            "best_multi_visit_sol_avg_drone_wait_by_point": "",
             "status": f"ERROR: {type(exc).__name__}: {exc}",
             "runtime_sec": round(time.time() - t0, 3),
         }
@@ -227,8 +341,20 @@ def main():
             "best_multi_visit_sol",
             "best_sol_avg_customers_per_drone_trip",
             "best_sol_avg_demand_per_drone_trip",
+            "best_sol_drone_trip_distances",
+            "best_sol_avg_distance_per_drone_trip",
+            "best_sol_truck_wait_by_point",
+            "best_sol_drone_wait_by_point",
+            "best_sol_avg_truck_wait_by_point",
+            "best_sol_avg_drone_wait_by_point",
             "best_multi_visit_sol_avg_customers_per_drone_trip",
             "best_multi_visit_sol_avg_demand_per_drone_trip",
+            "best_multi_visit_sol_drone_trip_distances",
+            "best_multi_visit_sol_avg_distance_per_drone_trip",
+            "best_multi_visit_sol_truck_wait_by_point",
+            "best_multi_visit_sol_drone_wait_by_point",
+            "best_multi_visit_sol_avg_truck_wait_by_point",
+            "best_multi_visit_sol_avg_drone_wait_by_point",
             "runtime_sec",
             "status",
         ]
