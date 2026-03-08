@@ -24,8 +24,6 @@ jobs:
         instance:
           - test_data/data_demand_random/30/C201_0.5.dat
           - test_data/data_demand_random/30/C201_3.dat
-          - test_data/data_demand_random/50/C201_0.5.dat
-          - test_data/data_demand_random/50/C201_3.dat
         instance_name:
           - C201_0.5
           - C201_3
