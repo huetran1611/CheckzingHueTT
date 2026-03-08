@@ -22,19 +22,21 @@ jobs:
       max-parallel: 20
       matrix:
         instance:
-          - test_data/data_demand_random/30/C201_0.5.dat
-          - test_data/data_demand_random/30/C201_3.dat
+          - test_data/data_demand_random/50/C201_0.5.dat
+          - test_data/data_demand_random/50/C201_1.5.dat
+          - test_data/data_demand_random/50/C201_3.dat
         instance_name:
           - C201_0.5
+          - C201_1.5
           - C201_3
         drone_capacity: [4, 8]
         drone_limit_time: [60, 120, 90]
         theta: [1, 2, 3]
         run_id: [1, 2, 3, 4]
         exclude:
-          - instance: test_data/data_demand_random/30/C201_0.5.dat
+          - instance: test_data/data_demand_random/50/C201_0.5.dat
             instance_name: C201_3
-          - instance: test_data/data_demand_random/30/C201_3.dat
+          - instance: test_data/data_demand_random/50/C201_3.dat
             instance_name: C201_0.5
 
     steps:
