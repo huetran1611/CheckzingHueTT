@@ -10,7 +10,7 @@ permissions:
 jobs:
   run-single-config:
     name: >-
-      ${{ matrix.instance_name }} |
+      ${{ matrix.instance.name }} |
       cap=${{ matrix.drone_capacity }} |
       limit=${{ matrix.drone_limit_time }} |
       theta=${{ matrix.theta }} |
@@ -22,22 +22,16 @@ jobs:
       max-parallel: 20
       matrix:
         instance:
-          - test_data/data_demand_random/50/C201_0.5.dat
-          - test_data/data_demand_random/50/C201_1.5.dat
-          - test_data/data_demand_random/50/C201_3.dat
-        instance_name:
-          - C201_0.5
-          - C201_1.5
-          - C201_3
+          - path: test_data/data_demand_random/50/C201_0.5.dat
+            name: C201_0.5
+          - path: test_data/data_demand_random/50/C201_1.5.dat
+            name: C201_1.5
+          - path: test_data/data_demand_random/50/C201_3.dat
+            name: C201_3
         drone_capacity: [4, 8]
         drone_limit_time: [60, 120, 90]
         theta: [1, 2, 3]
         run_id: [1, 2, 3, 4]
-        exclude:
-          - instance: test_data/data_demand_random/50/C201_0.5.dat
-            instance_name: C201_3
-          - instance: test_data/data_demand_random/50/C201_3.dat
-            instance_name: C201_0.5
 
     steps:
       - name: Checkout repository
@@ -53,7 +47,7 @@ jobs:
 
       - name: Run one experiment task
         env:
-          INSTANCE: ${{ matrix.instance }}
+          INSTANCE: ${{ matrix.instance.path }}
           DRONE_CAPACITY: ${{ matrix.drone_capacity }}
           DRONE_LIMIT_TIME: ${{ matrix.drone_limit_time }}
           THETA: ${{ matrix.theta }}
@@ -91,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: >-
-            row-${{ matrix.instance_name }}-
+            row-${{ matrix.instance.name }}-
             cap${{ matrix.drone_capacity }}-
             lt${{ matrix.drone_limit_time }}-
             th${{ matrix.theta }}-
