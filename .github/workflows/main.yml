@@ -30,9 +30,9 @@ jobs:
           - C201_0.5
           - C201_3
         drone_capacity: [4, 8]
-        drone_limit_time: [60, 120]
+        drone_limit_time: [60, 120, 90]
         theta: [1, 2, 3]
-        run_id: [1, 2, 3, 4, 5]
+        run_id: [1, 2, 3, 4]
         exclude:
           - instance: test_data/data_demand_random/30/C201_0.5.dat
             instance_name: C201_3
