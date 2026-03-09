@@ -22,16 +22,19 @@ jobs:
       max-parallel: 20
       matrix:
         instance:
-          - path: test_data/data_demand_random/50/C201_0.5.dat
+          - path: test_data/data_demand_random/100/C201_0.5.dat
             name: C201_0.5
-          - path: test_data/data_demand_random/50/C201_1.5.dat
+          - path: test_data/data_demand_random/100/C201_1.5.dat
             name: C201_1.5
-          - path: test_data/data_demand_random/50/C201_3.dat
+          - path: test_data/data_demand_random/100/C201_3.dat
             name: C201_3
+          - path: test_data/data_demand_random/30/C201_1.5.dat
+            name: C201_1.5
         drone_capacity: [4, 8]
         drone_limit_time: [60, 120, 90]
-        theta: [1, 2, 3]
+        theta: [1,2]
         run_id: [1, 2, 3, 4]
+
 
     steps:
       - name: Checkout repository
