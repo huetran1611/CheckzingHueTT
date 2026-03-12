@@ -4,7 +4,9 @@ import time
 import random
 import sys
 import types
+import glob
 import multiprocessing as mp
+import math
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
@@ -51,15 +53,37 @@ import Data
 import Function
 import test_similarity
 
-INSTANCES = [
-    r"test_data\data_demand_random\30\C201_3.dat",
-    r"test_data\data_demand_random\30\C201_0.5.dat",
-]
-THETAS = [1, 2, 3]
+def _discover_instances():
+    generated_50 = sorted(
+        glob.glob(os.path.join("test_data", "data_demand_random_50_batch_all1", "*.dat"))
+    )
+    if generated_50:
+        return generated_50
+
+    # patch_roots = [
+    #     os.path.join("test_data", "data_demand_random_patch", str(n), "C201*.dat")
+    #     for n in (10, 15, 20, 30)
+    # ]
+    # instances = []
+    # for pattern in patch_roots:
+    #     instances.extend(glob.glob(pattern))
+    # if instances:
+    #     return sorted(instances)
+
+    # # Fallback to legacy default set when patch data does not exist.
+    # return [
+    #     r"test_data\data_demand_random\30\C201_3.dat",
+    #     r"test_data\data_demand_random\30\C201_0.5.dat",
+    # ]
+
+
+INSTANCES = _discover_instances()
+THETAS = [1, 2]
 RUNS = 5
 DRONE_CAPACITIES = [4, 8]
-DRONE_LIMIT_TIMES = [60, 120]
-WORKERS = 4
+DRONE_LIMIT_TIMES = [60, 90, 120]
+WORKERS = None
+MAX_AUTO_WORKERS = 10
 OUTPUT_CSV = os.path.join("result", f"multivisit_experiment_{int(time.time())}.csv")
 
 
@@ -67,6 +91,63 @@ def ensure_parent(path):
     parent = os.path.dirname(path)
     if parent and not os.path.exists(parent):
         os.makedirs(parent, exist_ok=True)
+
+
+def _available_memory_gb():
+    try:
+        import psutil  # type: ignore
+
+        return psutil.virtual_memory().available / (1024 ** 3)
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            mem = MEMORYSTATUSEX()
+            mem.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem)):
+                return mem.ullAvailPhys / (1024 ** 3)
+        except Exception:
+            pass
+
+    return None
+
+
+def choose_worker_count(requested_workers=None):
+    cpu_total = os.cpu_count() or 1
+    if requested_workers is not None and requested_workers > 0:
+        return max(1, min(int(requested_workers), cpu_total, MAX_AUTO_WORKERS))
+
+    # Keep free cores for OS/UI to reduce risk of machine freeze.
+    reserve_cores = 2 if cpu_total >= 6 else 1
+    cpu_cap = max(1, min(cpu_total - reserve_cores, int(math.floor(cpu_total * 0.6))))
+
+    avail_mem_gb = _available_memory_gb()
+    if avail_mem_gb is None:
+        return cpu_cap
+
+    # Conservative estimate for this workload to avoid memory pressure.
+    mem_reserve_gb = 2.0
+    per_worker_gb = 1.0
+    usable_mem = max(0.0, avail_mem_gb - mem_reserve_gb)
+    mem_cap = max(1, int(math.floor(usable_mem / per_worker_gb)))
+
+    return max(1, min(cpu_cap, mem_cap, MAX_AUTO_WORKERS))
 
 
 def _extract_drone_trip_lists(solution):
@@ -306,6 +387,7 @@ def run_one_task(task):
 
 def main():
     ensure_parent(OUTPUT_CSV)
+    worker_count = choose_worker_count(WORKERS)
     tasks = []
     for instance in INSTANCES:
         for drone_capacity in DRONE_CAPACITIES:
@@ -315,7 +397,7 @@ def main():
                         tasks.append((instance, theta, run, drone_capacity, drone_limit_time))
 
     ctx = mp.get_context("spawn")
-    with ctx.Pool(processes=WORKERS) as pool:
+    with ctx.Pool(processes=worker_count) as pool:
         rows = list(pool.imap_unordered(run_one_task, tasks))
 
     rows.sort(
@@ -366,7 +448,7 @@ def main():
     print("output_csv=", OUTPUT_CSV)
     print("total_rows=", len(rows))
     print("ok_rows=", ok_count)
-    print("workers=", WORKERS)
+    print("workers=", worker_count)
 
 
 if __name__ == "__main__":
