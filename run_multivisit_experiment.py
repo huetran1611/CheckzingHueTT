@@ -82,6 +82,8 @@ THETAS = [1, 2]
 RUNS = 5
 DRONE_CAPACITIES = [4, 8]
 DRONE_LIMIT_TIMES = [60, 90, 120]
+DRONE_COUNTS = [2]
+TRUCK_COUNTS = [2]
 WORKERS = None
 MAX_AUTO_WORKERS = 10
 OUTPUT_CSV = os.path.join("result", f"multivisit_experiment_{int(time.time())}.csv")
@@ -270,21 +272,36 @@ def calc_drone_trip_stats(solution):
     return avg_customers, avg_demand
 
 
+def count_multi_visit_trips(solution):
+    if not solution or not isinstance(solution, list) or len(solution) < 2:
+        return None
+    trips = solution[1]
+    if not isinstance(trips, list):
+        return None
+
+    # Keep the same definition as has_multi_visit: a drone trip with more than one leg.
+    return sum(1 for trip in trips if isinstance(trip, list) and len(trip) > 1)
+
+
 def run_one_task(task):
-    instance, theta, run, drone_capacity, drone_limit_time = task
+    instance, theta, run, drone_capacity, drone_limit_time, drone_count, truck_count = task
     t0 = time.time()
 
     if not os.path.exists(instance):
         return {
             "instance": instance,
+            "drone_count": drone_count,
+            "truck_count": truck_count,
             "drone_capacity": drone_capacity,
             "drone_limit_time": drone_limit_time,
             "theta": theta,
             "run": run,
             "best_fitness": "",
             "best_sol": "",
+            "best_sol_multi_visit_trip_count": "",
             "best_multi_visit_fitness": "",
             "best_multi_visit_sol": "",
+            "best_multi_visit_sol_multi_visit_trip_count": "",
             "best_sol_avg_customers_per_drone_trip": "",
             "best_sol_avg_demand_per_drone_trip": "",
             "best_sol_drone_trip_distances": "",
@@ -310,6 +327,8 @@ def run_one_task(task):
 
     try:
         Data.read_data_random(instance)
+        Data.number_of_drones = int(drone_count)
+        Data.number_of_trucks = int(truck_count)
         Data.drone_capacity = drone_capacity
         Data.drone_limit_time = drone_limit_time
         test_similarity.theta = theta
@@ -319,6 +338,8 @@ def run_one_task(task):
 
         best_avg_cust, best_avg_demand = calc_drone_trip_stats(best_sol)
         mv_avg_cust, mv_avg_demand = calc_drone_trip_stats(best_multi_visit_sol)
+        best_multi_visit_trip_count = count_multi_visit_trips(best_sol)
+        mv_multi_visit_trip_count = count_multi_visit_trips(best_multi_visit_sol)
         best_distances, best_avg_distance = calc_drone_trip_distances(best_sol)
         mv_distances, mv_avg_distance = calc_drone_trip_distances(best_multi_visit_sol)
         best_truck_wait, best_drone_wait, best_avg_truck_wait, best_avg_drone_wait = calc_wait_stats(best_sol)
@@ -326,14 +347,18 @@ def run_one_task(task):
 
         return {
             "instance": instance,
+            "drone_count": drone_count,
+            "truck_count": truck_count,
             "drone_capacity": drone_capacity,
             "drone_limit_time": drone_limit_time,
             "theta": theta,
             "run": run,
             "best_fitness": best_fitness,
             "best_sol": str(best_sol),
+            "best_sol_multi_visit_trip_count": best_multi_visit_trip_count,
             "best_multi_visit_fitness": data_to_write.get("best_multi_visit_fitness"),
             "best_multi_visit_sol": str(best_multi_visit_sol),
+            "best_multi_visit_sol_multi_visit_trip_count": mv_multi_visit_trip_count,
             "best_sol_avg_customers_per_drone_trip": None if best_avg_cust is None else round(best_avg_cust, 6),
             "best_sol_avg_demand_per_drone_trip": None if best_avg_demand is None else round(best_avg_demand, 6),
             "best_sol_drone_trip_distances": str([round(v, 6) for v in best_distances]),
@@ -356,14 +381,18 @@ def run_one_task(task):
     except Exception as exc:
         return {
             "instance": instance,
+            "drone_count": drone_count,
+            "truck_count": truck_count,
             "drone_capacity": drone_capacity,
             "drone_limit_time": drone_limit_time,
             "theta": theta,
             "run": run,
             "best_fitness": "",
             "best_sol": "",
+            "best_sol_multi_visit_trip_count": "",
             "best_multi_visit_fitness": "",
             "best_multi_visit_sol": "",
+            "best_multi_visit_sol_multi_visit_trip_count": "",
             "best_sol_avg_customers_per_drone_trip": "",
             "best_sol_avg_demand_per_drone_trip": "",
             "best_sol_drone_trip_distances": "",
@@ -390,11 +419,13 @@ def main():
     worker_count = choose_worker_count(WORKERS)
     tasks = []
     for instance in INSTANCES:
-        for drone_capacity in DRONE_CAPACITIES:
-            for drone_limit_time in DRONE_LIMIT_TIMES:
-                for theta in THETAS:
-                    for run in range(1, RUNS + 1):
-                        tasks.append((instance, theta, run, drone_capacity, drone_limit_time))
+        for drone_count in DRONE_COUNTS:
+            for truck_count in TRUCK_COUNTS:
+                for drone_capacity in DRONE_CAPACITIES:
+                    for drone_limit_time in DRONE_LIMIT_TIMES:
+                        for theta in THETAS:
+                            for run in range(1, RUNS + 1):
+                                tasks.append((instance, theta, run, drone_capacity, drone_limit_time, drone_count, truck_count))
 
     ctx = mp.get_context("spawn")
     with ctx.Pool(processes=worker_count) as pool:
@@ -403,6 +434,8 @@ def main():
     rows.sort(
         key=lambda r: (
             r.get("instance", ""),
+            r.get("drone_count", 0),
+            r.get("truck_count", 0),
             r.get("drone_capacity", 0),
             r.get("drone_limit_time", 0),
             r.get("theta", 0),
@@ -413,14 +446,18 @@ def main():
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
         fieldnames = [
             "instance",
+            "drone_count",
+            "truck_count",
             "drone_capacity",
             "drone_limit_time",
             "theta",
             "run",
             "best_fitness",
             "best_sol",
+            "best_sol_multi_visit_trip_count",
             "best_multi_visit_fitness",
             "best_multi_visit_sol",
+            "best_multi_visit_sol_multi_visit_trip_count",
             "best_sol_avg_customers_per_drone_trip",
             "best_sol_avg_demand_per_drone_trip",
             "best_sol_drone_trip_distances",

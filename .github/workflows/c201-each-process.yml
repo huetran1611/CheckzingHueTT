@@ -42,9 +42,9 @@ jobs:
           instance_names = sorted(cluster_names & random_names)
 
           theta = 2
-          runs = [1, 2, 3, 4, 5]
+          runs = [1, 2, 3]
           drone_capacities = [4, 8]
-          drone_limit_times = [60, 90, 120]
+          drone_limit_times = [60,90,120]
 
           tasks = []
           idx = 0
@@ -122,6 +122,8 @@ jobs:
           random_instance = str(pathlib.Path("test_data/data_demand_random_50_batch_all1_equal_random") / instance_name)
           drone_capacity = int("${{ matrix.task.drone_capacity }}")
           drone_limit_time = int("${{ matrix.task.drone_limit_time }}")
+          drone_count = 1
+          truck_count = 2
           theta = 2
           run_id = int("${{ matrix.task.run }}")
           task_id = int("${{ matrix.task.id }}")
@@ -129,7 +131,9 @@ jobs:
           results = []
           for label, instance in (("cluster", cluster_instance), ("random", random_instance)):
               exp.test_similarity.theta = theta
-              row = exp.run_one_task((instance, theta, run_id, drone_capacity, drone_limit_time))
+              row = exp.run_one_task(
+                (instance, theta, run_id, drone_capacity, drone_limit_time, drone_count, truck_count)
+              )
               row["instance_group"] = label
               row["instance_name"] = instance_name
               results.append(row)
