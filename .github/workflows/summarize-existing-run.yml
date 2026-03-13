@@ -1,12 +1,16 @@
 name: Summarize Existing Run
-# thêm cmt
+
 on:
   workflow_dispatch:
     inputs:
       run_id:
         description: "GitHub Actions run ID to summarize"
-        required: true
+        required: false
         type: string
+  push:
+    paths:
+      - ".github/workflows/summarize-existing-run.yml"
+      - ".github/workflows/summarize-run-id.txt"
 
 permissions:
   actions: read
@@ -20,6 +24,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve run_id
+        id: resolve
+        shell: bash
+        run: |
+          input_run_id="${{ inputs.run_id }}"
+          file_run_id=""
+
+          if [ -f ".github/workflows/summarize-run-id.txt" ]; then
+            file_run_id=$(grep -Eo '[0-9]+' .github/workflows/summarize-run-id.txt | head -n1 || true)
+          fi
+
+          resolved="$input_run_id"
+          if [ -z "$resolved" ]; then
+            resolved="$file_run_id"
+          fi
+
+          if [ -z "$resolved" ]; then
+            echo "Missing run_id. Provide workflow_dispatch input or set .github/workflows/summarize-run-id.txt"
+            exit 1
+          fi
+
+          echo "run_id=$resolved" >> "$GITHUB_OUTPUT"
+          echo "Resolved run_id=$resolved"
 
       - name: Download process artifacts from target run
         id: download
@@ -36,7 +64,7 @@ jobs:
             const listResp = await github.rest.actions.listWorkflowRunArtifacts({
               owner,
               repo,
-              run_id: 23008292965,
+              run_id: runId,
               per_page: 100,
             });
 
@@ -127,7 +155,7 @@ jobs:
           {
             echo "# Existing Run Summary"
             echo ""
-            echo "- Source run_id: ${{ inputs.run_id }}"
+            echo "- Source run_id: ${{ steps.resolve.outputs.run_id }}"
             echo "- Downloaded process artifacts: ${{ steps.download.outputs.artifact_count }}"
             echo "- Total result rows: ${{ steps.merge.outputs.total_rows }}"
             echo "- OK rows: ${{ steps.merge.outputs.ok_rows }}"
