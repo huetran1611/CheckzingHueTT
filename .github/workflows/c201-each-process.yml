@@ -159,3 +159,92 @@ jobs:
         with:
           name: process-${{ matrix.task.id }}
           path: result/gha_each_process/task_${{ matrix.task.id }}.*
+
+  summary:
+    name: Build Summary CSV
+    needs:
+      - build-matrix
+      - run-one-process
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Download row artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded_rows
+
+      - name: Merge all rows into one CSV
+        id: merge
+        run: |
+          python - <<'PY'
+          import csv
+          import glob
+          import os
+
+          files = sorted(glob.glob("downloaded_rows/**/*.csv", recursive=True))
+          if not files:
+              raise SystemExit("No row CSV artifacts found.")
+
+          rows = []
+          fieldnames = None
+          for path in files:
+              with open(path, newline="", encoding="utf-8") as f:
+                  reader = csv.DictReader(f)
+                  if fieldnames is None:
+                      fieldnames = reader.fieldnames
+                  for row in reader:
+                      rows.append(row)
+
+          rows.sort(
+              key=lambda r: (
+                  r.get("instance_name", ""),
+                  r.get("instance_group", ""),
+                  int(r.get("drone_capacity", 0) or 0),
+                  int(r.get("drone_limit_time", 0) or 0),
+                  int(r.get("theta", 0) or 0),
+                  int(r.get("run", 0) or 0),
+              )
+          )
+
+          os.makedirs("result", exist_ok=True)
+          out_path = "result/multivisit_experiment_github_matrix.csv"
+          with open(out_path, "w", newline="", encoding="utf-8") as f:
+              writer = csv.DictWriter(f, fieldnames=fieldnames)
+              writer.writeheader()
+              writer.writerows(rows)
+
+          ok_rows = sum(1 for r in rows if r.get("status") == "OK")
+          error_rows = len(rows) - ok_rows
+          cluster_rows = sum(1 for r in rows if r.get("instance_group") == "cluster")
+          random_rows = sum(1 for r in rows if r.get("instance_group") == "random")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"summary_csv={out_path}\n")
+              out.write(f"total_rows={len(rows)}\n")
+              out.write(f"ok_rows={ok_rows}\n")
+              out.write(f"error_rows={error_rows}\n")
+              out.write(f"cluster_rows={cluster_rows}\n")
+              out.write(f"random_rows={random_rows}\n")
+          PY
+
+      - name: Write GitHub Summary
+        run: |
+          {
+            echo "# Multi-Visit Run Summary"
+            echo ""
+            echo "- Expected jobs: ${{ needs.build-matrix.outputs.total_tasks }}"
+            echo "- Total result rows: ${{ steps.merge.outputs.total_rows }}"
+            echo "- OK rows: ${{ steps.merge.outputs.ok_rows }}"
+            echo "- Error rows: ${{ steps.merge.outputs.error_rows }}"
+            echo "- Cluster rows: ${{ steps.merge.outputs.cluster_rows }}"
+            echo "- Random rows: ${{ steps.merge.outputs.random_rows }}"
+            echo "- Merged CSV: \`${{ steps.merge.outputs.summary_csv }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: multivisit-experiment-summary
+          path: result/multivisit_experiment_github_matrix.csv
