@@ -67,14 +67,14 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const listResp = await github.rest.actions.listWorkflowRunArtifacts({
+            const allArtifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
               owner,
               repo,
               run_id: runId,
               per_page: 100,
             });
 
-            const artifacts = listResp.data.artifacts.filter(a => a.name.startsWith('process-'));
+            const artifacts = allArtifacts.filter(a => a.name.startsWith('process-'));
             if (artifacts.length === 0) {
               core.setFailed(`No process-* artifacts found for run_id=${runId}`);
               return;
@@ -93,6 +93,7 @@ jobs:
             }
 
             core.setOutput('artifact_count', String(artifacts.length));
+            core.info(`Downloaded ${artifacts.length} process-* artifacts from run_id=${runId}`);
 
       - name: Unzip downloaded artifacts
         shell: bash
@@ -163,6 +164,7 @@ jobs:
             echo ""
             echo "- Source run_id: ${{ steps.resolve.outputs.run_id }}"
             echo "- Downloaded process artifacts: ${{ steps.download.outputs.artifact_count }}"
+            echo "- Expected rows ~= artifacts * 2 (cluster + random)"
             echo "- Total result rows: ${{ steps.merge.outputs.total_rows }}"
             echo "- OK rows: ${{ steps.merge.outputs.ok_rows }}"
             echo "- Error rows: ${{ steps.merge.outputs.error_rows }}"
