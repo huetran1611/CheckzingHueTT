@@ -1,5 +1,5 @@
 name: Summarize Existing Run
-
+# thêm cmt
 on:
   workflow_dispatch:
     inputs:
@@ -36,7 +36,7 @@ jobs:
             const listResp = await github.rest.actions.listWorkflowRunArtifacts({
               owner,
               repo,
-              run_id: runId,
+              run_id: 23008292965,
               per_page: 100,
             });
 
