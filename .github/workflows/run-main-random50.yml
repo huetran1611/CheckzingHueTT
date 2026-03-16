@@ -39,7 +39,7 @@ jobs:
               root / "test_data" / "data_demand_random_50_batch_all1_equal_random",
           ]
           a_values = [4, 8]
-          ld_values = [90]
+          ld_values = [60]
 
           tasks = []
           job_id = 0

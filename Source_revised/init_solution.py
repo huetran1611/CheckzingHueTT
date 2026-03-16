@@ -292,11 +292,36 @@ def tabu_search_phase1(raw_solution: Any, data: ProblemData) -> Any:
 
 
 def local_search_phase2(raw_solution: Any, data: ProblemData) -> Any:
+    base_solution = copy.deepcopy(raw_solution)
+    base_eval = evaluate_solution(base_solution, data)
+    safe_solution = None
+    if not base_eval.feasible:
+        # Hard fallback: rebuild truck-only structure from current truck routes.
+        fallback = _build_truck_only_solution(_truck_routes_from_raw(raw_solution))
+        fallback_eval = evaluate_solution(fallback, data)
+        if fallback_eval.feasible:
+            base_solution = fallback
+            base_eval = fallback_eval
+            safe_solution = copy.deepcopy(fallback)
+        else:
+            # Last-resort fallback from data construction.
+            fallback2 = build_initial_solution_phase1(data)
+            fallback2_eval = evaluate_solution(fallback2, data)
+            if fallback2_eval.feasible:
+                base_solution = fallback2
+                base_eval = fallback2_eval
+                safe_solution = copy.deepcopy(fallback2)
+            else:
+                return fallback2
+    else:
+        safe_solution = copy.deepcopy(base_solution)
+
     seeded = _seed_single_trip_release_desc(raw_solution, data)
-    current = copy.deepcopy(seeded if seeded is not None else raw_solution)
+    current = copy.deepcopy(seeded if seeded is not None else base_solution)
     current_eval = evaluate_solution(current, data)
     if not current_eval.feasible:
-        return current
+        current = base_solution
+        current_eval = base_eval
     current_fit = current_eval.system_completion_time
     current_truck_sum = sum(current_eval.truck_time.values())
 
@@ -344,7 +369,10 @@ def local_search_phase2(raw_solution: Any, data: ProblemData) -> Any:
         current_fit = best_next_fit
         current_truck_sum = best_next_truck_sum
 
-    return current
+    final_eval = evaluate_solution(current, data)
+    if final_eval.feasible:
+        return current
+    return copy.deepcopy(safe_solution if safe_solution is not None else base_solution)
 
 
 def build_two_phase_solution(data: ProblemData, seed: Optional[int] = None) -> Any:

@@ -35,7 +35,7 @@ class AtsParams:
     gamma2: float = 0.3
     gamma3: float = 0.1
     gamma4: float = 0.3
-    seed: Optional[int] = 42
+    seed: Optional[int] = None
     use_eval_cache: bool = True
 
 def roulette_select(items: List[str], weights: Dict[str, float], rng: random.Random) -> str:
@@ -145,7 +145,7 @@ def adaptive_tabu_search(
     instance_path: str,
     params: AtsParams,
     data_override: Any = None,
-    verbose: bool = False,
+    verbose: bool = True,
 ) -> Tuple[Any, float, Any, Any]:
     rng = random.Random(params.seed)
     if params.seed is not None:
@@ -279,14 +279,14 @@ def adaptive_tabu_search(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Adaptive Tabu Search for truck-drone resupply")
     parser.add_argument("--instance", required=True, help="Path to .dat instance")
-    parser.add_argument("--nimp", type=int, default=30)
-    parser.add_argument("--seg", type=int, default=8)
+    parser.add_argument("--nimp", type=int, default=60)
+    parser.add_argument("--seg", type=int, default=4)
     parser.add_argument("--div", type=int, default=3)
-    parser.add_argument("--gamma1", type=float, default=9.0)
-    parser.add_argument("--gamma2", type=float, default=3.0)
-    parser.add_argument("--gamma3", type=float, default=1.0)
-    parser.add_argument("--gamma4", type=float, default=0.2)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--gamma1", type=float, default=0.5)
+    parser.add_argument("--gamma2", type=float, default=0.3)
+    parser.add_argument("--gamma3", type=float, default=0.1)
+    parser.add_argument("--gamma4", type=float, default=0.3)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--A", type=float, default=None, help="Override drone capacity (optional)")
     parser.add_argument("--L_d", type=float, default=None, help="Override drone limit time (optional)")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
@@ -336,4 +336,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

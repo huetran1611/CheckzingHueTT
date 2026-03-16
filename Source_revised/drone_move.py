@@ -62,16 +62,6 @@ def _release_compatible(data: ProblemData, customer: int, leg_customers: List[in
     return True
 
 
-def _launch_city_used_in_other_trip(trips: List[List[DroneLeg]], launch_city: int, trip_idx: Optional[int] = None) -> bool:
-    for idx, trip in enumerate(trips):
-        if trip_idx is not None and idx == trip_idx:
-            continue
-        for leg in trip:
-            if leg.launch_city == launch_city:
-                return True
-    return False
-
-
 def best_sync_point_relocation(raw_solution: Any, data: ProblemData, base_fit: float) -> Optional[Any]:
     trucks, trips = normalize_solution(raw_solution)
     best_sol: Optional[Any] = None
@@ -145,8 +135,8 @@ def best_package_relocation(raw_solution: Any, data: ProblemData, base_fit: floa
                                 best_sol = cand_raw
 
                     if demand <= data.drone_capacity + 1e-9:
-                        if _launch_city_used_in_other_trip(trips, launch_city):
-                            continue
+                        # If existing legs at this launch city are full, allow creating
+                        # a new trip (feasibility is still checked by evaluator).
                         cand_trucks = copy.deepcopy(trucks)
                         cand_trips = copy.deepcopy(trips)
                         _remove_customer_everywhere(cand_trucks, cand_trips, customer)
