@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: main.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--instance", "test_data/data_demand_random/10/C101_0.5.dat",
+                "--A", "4",
+                "--L_d", "120"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: openai_example.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/openai_example.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env"
+        }
+    ]
+}

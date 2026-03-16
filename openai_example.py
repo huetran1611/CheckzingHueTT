@@ -10,12 +10,22 @@ from __future__ import annotations
 import os
 from openai import OpenAI
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
 
 def get_client() -> OpenAI:
     """Create an OpenAI client using the OPENAI_API_KEY environment variable."""
+    if load_dotenv is not None:
+        load_dotenv()
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("Missing OPENAI_API_KEY environment variable.")
+        raise RuntimeError(
+            "Missing OPENAI_API_KEY. Set it in the shell or create a .env file in the project root."
+        )
     return OpenAI(api_key=api_key)
 
 
