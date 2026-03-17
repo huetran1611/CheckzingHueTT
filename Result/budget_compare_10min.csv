@@ -1,0 +1,9 @@
+solver,instance,status,objective,initial_objective,best_multi_visit_fitness,elapsed_seconds,drone_trip_count,segments_run,diversification_rounds,stderr
+Source_revised2,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_cluster/C101_0.5.dat,ok,524.0,524.0,,1.734112024307251,1,0,0,
+test_similarity,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_cluster/C101_0.5.dat,ok,502.0,,530.0,614.9518151283264,12,,,
+Source_revised2,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_cluster/C101_1.dat,ok,698.0,698.0,,1.2378721237182617,1,0,0,
+test_similarity,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_cluster/C101_1.dat,timeout,,,,630.0233399868011,,,,
+Source_revised2,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_random/C101_0.5.dat,ok,531.0,531.0,,1.0184059143066406,1,0,0,
+test_similarity,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_random/C101_0.5.dat,timeout,,,,630.0186660289764,,,,
+Source_revised2,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_random/C101_1.dat,ok,719.0,719.0,,0.7820651531219482,1,0,0,
+test_similarity,/Users/huetran/CheckzingHueTT/test_data/data_demand_random_50_batch_all1_equal_random/C101_1.dat,timeout,,,,630.0247359275818,,,,
