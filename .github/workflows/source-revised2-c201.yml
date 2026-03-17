@@ -82,7 +82,6 @@ jobs:
             --instance-group "${{ matrix.task.instance_group }}" \
             --job-id "${{ matrix.task.job_id }}" \
             --run-index "${{ matrix.task.run_index }}" \
-            --seed "${{ matrix.task.seed }}" \
             --A "${{ matrix.task.A }}" \
             --L "${{ matrix.task.L }}" \
             --config source_revised2_c201_batch.yml \

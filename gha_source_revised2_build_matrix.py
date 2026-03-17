@@ -46,8 +46,6 @@ def build_matrix(config_path: Path) -> list[dict[str, Any]]:
     a_values = cfg.get("A", [4, 8])
     l_values = cfg.get("L", [60, 90, 120])
     runs_per_config = int(cfg.get("runs_per_config", 3))
-    base_seed = int(cfg.get("base_seed", 42))
-
     tasks: list[dict[str, Any]] = []
     job_id = 0
     for instance in instances:
@@ -65,7 +63,6 @@ def build_matrix(config_path: Path) -> list[dict[str, Any]]:
                             "A": a,
                             "L": l_value,
                             "run_index": run_idx,
-                            "seed": base_seed + run_idx - 1,
                         }
                     )
     return tasks

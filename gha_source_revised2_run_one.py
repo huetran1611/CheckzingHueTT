@@ -131,7 +131,6 @@ def main() -> None:
     parser.add_argument("--instance-group", required=True)
     parser.add_argument("--job-id", required=True, type=int)
     parser.add_argument("--run-index", required=True, type=int)
-    parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--A", required=True, type=float)
     parser.add_argument("--L", required=True, type=float)
     parser.add_argument("--config", required=True, type=Path)
@@ -155,7 +154,7 @@ def main() -> None:
         gamma2=float(ats_cfg.get("gamma2", 0.3)),
         gamma3=float(ats_cfg.get("gamma3", 0.1)),
         gamma4=float(ats_cfg.get("gamma4", 0.3)),
-        seed=int(args.seed),
+        seed=None,
         truck_max_neighbors=int(ats_cfg.get("truck_max_neighbors", 300)),
         drone_max_neighbors=int(ats_cfg.get("drone_max_neighbors", 120)),
         use_drone_refine=bool(ats_cfg.get("use_drone_refine", True)),
@@ -183,7 +182,7 @@ def main() -> None:
         "instance": str(args.instance),
         "instance_name": args.instance.name,
         "run_index": args.run_index,
-        "seed": args.seed,
+        "seed": None,
         "drone_capacity": args.A,
         "drone_limit_time": args.L,
         "status": "OK",
