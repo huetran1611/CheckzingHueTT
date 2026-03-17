@@ -388,6 +388,11 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
         else: 
             T += 1
         END += 1
+    # Recompute objective values from final solutions to avoid stale fitness values.
+    best_fitness = Function.fitness(best_sol)[0]
+    if best_multi_visit_sol is not None:
+        best_multi_visit_fitness = Function.fitness(best_multi_visit_sol)[0]
+
     if data_to_write == {}:
         data_to_write = {
             "Done": True,
@@ -396,6 +401,9 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
             "Best_T": Best_T,
             "END": END
         }
+    else:
+        data_to_write["best_fitness"] = best_fitness
+        data_to_write["best_sol"] = best_sol
     data_to_write["best_multi_visit_sol"] = best_multi_visit_sol
     data_to_write["best_multi_visit_fitness"] = best_multi_visit_fitness if best_multi_visit_sol is not None else None
         
@@ -469,6 +477,13 @@ def Tabu_search_for_CVRP(CC):
         # if end_time - start_time > 3000:
         #     break
 
+    # Recompute objective values from final picked solutions before returning.
+    best_fitness = Function.fitness(best_sol)[0]
+    if best_multi_visit_sol is not None:
+        best_multi_visit_fitness = Function.fitness(best_multi_visit_sol)[0]
+
+    data_to_write["best_sol"] = best_sol
+    data_to_write["best_fitness"] = best_fitness
     data_to_write["best_multi_visit_sol"] = best_multi_visit_sol
     data_to_write["best_multi_visit_fitness"] = best_multi_visit_fitness if best_multi_visit_sol is not None else None
     return best_fitness, best_sol, data_to_write
