@@ -22,6 +22,9 @@ class FitnessResult:
     drone_departure_time: Dict[int, float] = field(default_factory=dict)
     drone_return_time: Dict[int, float] = field(default_factory=dict)
     drone_flight_wait_energy_time: Dict[int, float] = field(default_factory=dict)
+    truck_wait_by_city: Dict[int, float] = field(default_factory=dict)
+    drone_wait_by_city: Dict[int, float] = field(default_factory=dict)
+    drone_trip_time: Dict[int, float] = field(default_factory=dict)
 
 
 def _to_solution(solution: Solution | Any) -> Solution:
@@ -115,6 +118,9 @@ def evaluate_fitness(solution: Solution | Any, data: ProblemData) -> FitnessResu
     drone_departure_time: Dict[int, float] = {}
     drone_return_time: Dict[int, float] = {}
     drone_energy_time: Dict[int, float] = {}
+    truck_wait_by_city: Dict[int, float] = {}
+    drone_wait_by_city: Dict[int, float] = {}
+    drone_trip_time: Dict[int, float] = {}
 
     truck_idx = [0 for _ in normalized_routes]
     truck_time = [0.0 for _ in normalized_routes]
@@ -296,7 +302,10 @@ def evaluate_fitness(solution: Solution | Any, data: ProblemData) -> FitnessResu
             # Sync with truck at launch point.
             sync_time = max(drone_arrival, truck_time[owner])
             drone_wait = max(0.0, sync_time - drone_arrival)
+            truck_wait = max(0.0, sync_time - truck_time[owner])
             trip_energy += drone_wait
+            truck_wait_by_city[launch] = truck_wait_by_city.get(launch, 0.0) + truck_wait
+            drone_wait_by_city[launch] = drone_wait_by_city.get(launch, 0.0) + drone_wait
 
             # Unloading applies to both truck and drone schedule, but not to drone energy.
             service_end = sync_time + data.unloading_time
@@ -338,6 +347,7 @@ def evaluate_fitness(solution: Solution | Any, data: ProblemData) -> FitnessResu
 
         drone_return_time[trip_idx] = drone_clock
         drone_energy_time[trip_idx] = trip_energy
+        drone_trip_time[trip_idx] = drone_clock - depart_time
         heapq.heappush(drone_heap, (drone_clock, drone_id))
 
     # Finish truck routes to depot.
@@ -385,6 +395,9 @@ def evaluate_fitness(solution: Solution | Any, data: ProblemData) -> FitnessResu
         drone_departure_time=drone_departure_time,
         drone_return_time=drone_return_time,
         drone_flight_wait_energy_time=drone_energy_time,
+        truck_wait_by_city=truck_wait_by_city,
+        drone_wait_by_city=drone_wait_by_city,
+        drone_trip_time=drone_trip_time,
     )
 
 

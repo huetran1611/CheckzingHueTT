@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 import random
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .drone_local_search import local_search_drone
@@ -54,9 +55,6 @@ class AtsParams:
     diversification_max_moves_per_route: Optional[int] = 80
     diversification_accept_non_improving: bool = True
 
-    # Optional hard stop by number of ATS segments.
-    max_segments: Optional[int] = None
-
 
 @dataclass
 class AtsResult:
@@ -70,6 +68,10 @@ class AtsResult:
     best_multi_visit_eval: Optional[FitnessResult]
     segments_run: int
     diversification_rounds: int
+    terminated_by_time_limit: bool = False
+    elapsed_seconds: float = 0.0
+    best_multi_visit_solution: Optional[Solution] = None
+    best_multi_visit_eval: Optional[FitnessResult] = None
     weights: Dict[str, float] = field(default_factory=dict)
     segment_trace: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -154,6 +156,8 @@ def adaptive_tabu_search(
     4) Keep global best solution p_best.
     """
     cfg = params if params is not None else AtsParams()
+    start_time = time.perf_counter()
+    terminated_by_time_limit = False
 
     rng = random.Random(cfg.seed)
     if cfg.seed is not None:
@@ -195,8 +199,6 @@ def adaptive_tabu_search(
 
     best = Solution.from_legacy(current.to_legacy())
     best_eval = current_eval
-    best_multi_visit_solution: Optional[Solution] = None
-    best_multi_visit_eval: Optional[FitnessResult] = None
 
     neighborhood_generators: Dict[str, Callable[..., List[TruckNeighbor]]] = {
         "(1,0)": generate_truck_neighbors_move_1_0,
@@ -226,27 +228,7 @@ def adaptive_tabu_search(
             out.append(legs)
         return out
 
-    def _multi_visit_trip_count(sol: Solution) -> int:
-        return sum(1 for trip in sol.drone_queue if trip.is_multi_visit)
-
-    def _update_best_multi_visit(sol: Solution, ev: FitnessResult) -> None:
-        nonlocal best_multi_visit_solution, best_multi_visit_eval
-        if not ev.feasible:
-            return
-        if not sol.has_multi_visit_trip():
-            return
-        if (
-            best_multi_visit_eval is None
-            or _is_better(_key_from_eval(ev), _key_from_eval(best_multi_visit_eval))
-        ):
-            best_multi_visit_solution = Solution.from_legacy(sol.to_legacy())
-            best_multi_visit_eval = ev
-
-    _update_best_multi_visit(current, current_eval)
-
     while no_improve_div < cfg.div:
-        if cfg.max_segments is not None and segments_run >= cfg.max_segments:
-            break
         segments_run += 1
         if verbose:
             print(
@@ -265,6 +247,8 @@ def adaptive_tabu_search(
         best_before_segment = _key_from_eval(best_eval)
 
         while no_improve_iter < cfg.nimp:
+            if _time_limit_reached():
+                break
             chosen = _roulette_select(neighborhoods, weights, rng)
             generator = neighborhood_generators[chosen]
             cand_neighbors = generator(current, data, max_neighbors=cfg.truck_max_neighbors)
@@ -291,6 +275,8 @@ def adaptive_tabu_search(
                 no_improve_iter += 1
                 iteration += 1
                 continue
+
+            _maybe_update_best_multi_visit(candidate, cand_eval)
 
             prev_current_key = _key_from_eval(current_eval)
             cand_key = _key_from_eval(cand_eval)
@@ -350,6 +336,8 @@ def adaptive_tabu_search(
             )
             continue
 
+        if _time_limit_reached():
+            break
         diversification_rounds += 1
         diversified, _ = diversification_truck(
             current,
@@ -370,6 +358,7 @@ def adaptive_tabu_search(
 
         pbest_improved_by_div = False
         if div_eval.feasible:
+            _maybe_update_best_multi_visit(diversified, div_eval)
             current = diversified
             current_eval = div_eval
             _update_best_multi_visit(current, current_eval)
@@ -418,6 +407,10 @@ def adaptive_tabu_search(
         best_multi_visit_eval=best_multi_visit_eval,
         segments_run=segments_run,
         diversification_rounds=diversification_rounds,
+        terminated_by_time_limit=terminated_by_time_limit,
+        elapsed_seconds=time.perf_counter() - start_time,
+        best_multi_visit_solution=best_multi_visit_solution,
+        best_multi_visit_eval=best_multi_visit_eval,
         weights=weights,
         segment_trace=segment_trace,
     )

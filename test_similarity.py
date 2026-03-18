@@ -501,7 +501,7 @@ def run_default_cli():
     #             glob.glob(os.path.join(folder_path, "*3.dat"))
     #txt_files = glob.glob(os.path.join(folder_path, data_set))
     # txt_files = ["test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_1.dat", "test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_2.5.dat", "test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_2.dat", "test_data\\Smith\\TSPrd(time)\\Solomon\\15\\RC101_3.dat"]
-    txt_files = [r"D:\HueTT\prepare for Phd\problem 4_ resupply\code_heuristic\CheckzingHueTT\test_data\data_new\6.dat"]
+    txt_files = [r"/Users/huetran/CheckzingHueTT/test_data/data_demand_random/15/C101_3.dat"]
     #test_data\data_new\C101_0.5_MR15_autotuned.dat
     # Tạo một tệp Excel mới
     workbook = openpyxl.Workbook()
@@ -519,8 +519,8 @@ def run_default_cli():
             # log_file_path = os.path.join(log_folder, log)
             # log_file = open(log_file_path, 'w')
             # sys.stdout = log_file
-            #Data.read_data_random(txt_file)
-            Data.read_data_random_fixeDemandEqual1(txt_file)
+            Data.read_data_random(txt_file)
+            #Data.read_data_random_fixeDemandEqual1(txt_file)
             result = []
             run_time = []
             avg = 0
