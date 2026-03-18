@@ -519,7 +519,7 @@ def _op_reorder_queue(solution: Solution, data: ProblemData, max_branch: int = 2
 def generate_drone_neighbors(
     solution: Solution | Any,
     data: ProblemData,
-    max_neighbors: int = 120,
+    max_neighbors: Optional[int] = 120,
 ) -> List[DroneNeighbor]:
     base_raw = solution if isinstance(solution, Solution) else Solution.from_legacy(solution)
     base = _clone_solution(base_raw)
@@ -548,14 +548,16 @@ def generate_drone_neighbors(
             candidates[sig] = neighbor
 
     ranked = sorted(candidates.values(), key=lambda n: (n.objective, n.truck_sum, n.move))
-    return ranked[:max_neighbors]
+    if max_neighbors is not None and max_neighbors >= 0:
+        return ranked[:max_neighbors]
+    return ranked
 
 
 def local_search_drone(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 120,
+    max_neighbors: Optional[int] = 120,
 ) -> Solution:
     current = solution if isinstance(solution, Solution) else Solution.from_legacy(solution)
     current = _clone_solution(current)
@@ -583,7 +585,7 @@ def local_search_drone_legacy(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 120,
+    max_neighbors: Optional[int] = 120,
 ) -> List[Any]:
     return local_search_drone(
         solution,

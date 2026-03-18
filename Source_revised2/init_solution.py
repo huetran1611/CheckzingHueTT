@@ -244,7 +244,7 @@ def build_initial_solution(
     data: ProblemData,
     apply_drone_local_search: bool = True,
     drone_ls_iterations: int | None = None,
-    drone_ls_max_neighbors: int = 120,
+    drone_ls_max_neighbors: int | None = 120,
     prefer_nonempty_drone: bool = True,
     nonempty_makespan_tolerance: float = float("inf"),
 ) -> Solution:
@@ -303,7 +303,7 @@ def build_initial_solution_legacy(
     data: ProblemData,
     apply_drone_local_search: bool = True,
     drone_ls_iterations: int | None = None,
-    drone_ls_max_neighbors: int = 120,
+    drone_ls_max_neighbors: int | None = 120,
     prefer_nonempty_drone: bool = True,
     nonempty_makespan_tolerance: float = float("inf"),
 ) -> List[Any]:

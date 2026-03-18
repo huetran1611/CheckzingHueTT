@@ -1190,9 +1190,9 @@ def generate_truck_neighbors_move_2_opt(
 def generate_truck_diversification_neighbors(
     solution: Solution | Any,
     data: ProblemData,
-    max_neighbors: int = 200,
+    max_neighbors: Optional[int] = 200,
     rng: Optional[random.Random] = None,
-    max_moves_per_route: int = 80,
+    max_moves_per_route: Optional[int] = 80,
 ) -> List[TruckNeighbor]:
     base = _clone_solution(_to_solution(solution))
     base_routes = _routes_from_solution(base)
@@ -1213,9 +1213,9 @@ def generate_truck_diversification_neighbors(
 def diversification_truck(
     solution: Solution | Any,
     data: ProblemData,
-    max_neighbors: int = 200,
+    max_neighbors: Optional[int] = 200,
     rng: Optional[random.Random] = None,
-    max_moves_per_route: int = 80,
+    max_moves_per_route: Optional[int] = 80,
     accept_non_improving: bool = True,
 ) -> Tuple[Solution, bool]:
     """
@@ -1251,7 +1251,7 @@ def _local_search_truck_by_generator(
     data: ProblemData,
     neighbor_generator: Callable[..., List[TruckNeighbor]],
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> Solution:
     current = _clone_solution(_to_solution(solution))
     cur_eval = evaluate_fitness(current, data)
@@ -1278,7 +1278,7 @@ def local_search_truck_move_1_0(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> Solution:
     return _local_search_truck_by_generator(
         solution,
@@ -1293,7 +1293,7 @@ def local_search_truck_move_1_1(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> Solution:
     return _local_search_truck_by_generator(
         solution,
@@ -1308,7 +1308,7 @@ def local_search_truck_move_2_0(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> Solution:
     return _local_search_truck_by_generator(
         solution,
@@ -1323,7 +1323,7 @@ def local_search_truck_move_2_1(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> Solution:
     return _local_search_truck_by_generator(
         solution,
@@ -1338,7 +1338,7 @@ def local_search_truck_move_2_opt(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> Solution:
     return _local_search_truck_by_generator(
         solution,
@@ -1353,7 +1353,7 @@ def local_search_truck_move_1_0_legacy(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> List[Any]:
     return local_search_truck_move_1_0(
         solution,
@@ -1367,7 +1367,7 @@ def local_search_truck_move_1_1_legacy(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> List[Any]:
     return local_search_truck_move_1_1(
         solution,
@@ -1381,7 +1381,7 @@ def local_search_truck_move_2_0_legacy(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> List[Any]:
     return local_search_truck_move_2_0(
         solution,
@@ -1395,7 +1395,7 @@ def local_search_truck_move_2_1_legacy(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> List[Any]:
     return local_search_truck_move_2_1(
         solution,
@@ -1409,7 +1409,7 @@ def local_search_truck_move_2_opt_legacy(
     solution: Solution | Any,
     data: ProblemData,
     max_iterations: Optional[int] = None,
-    max_neighbors: int = 300,
+    max_neighbors: Optional[int] = 300,
 ) -> List[Any]:
     return local_search_truck_move_2_opt(
         solution,
@@ -1422,9 +1422,9 @@ def local_search_truck_move_2_opt_legacy(
 def diversification_truck_legacy(
     solution: Solution | Any,
     data: ProblemData,
-    max_neighbors: int = 200,
+    max_neighbors: Optional[int] = 200,
     rng: Optional[random.Random] = None,
-    max_moves_per_route: int = 80,
+    max_moves_per_route: Optional[int] = 80,
     accept_non_improving: bool = True,
 ) -> Tuple[List[Any], bool]:
     sol, improved = diversification_truck(

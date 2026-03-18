@@ -42,17 +42,20 @@ class AtsParams:
     seed: Optional[int] = None
 
     # Neighborhood size caps.
-    truck_max_neighbors: int = 300
-    drone_max_neighbors: int = 120
+    truck_max_neighbors: Optional[int] = 300
+    drone_max_neighbors: Optional[int] = 120
 
     # Apply drone LS after selected truck neighbor.
     use_drone_refine: bool = True
     drone_ls_iterations: Optional[int] = None
 
     # Diversification controls.
-    diversification_max_neighbors: int = 200
-    diversification_max_moves_per_route: int = 80
+    diversification_max_neighbors: Optional[int] = 200
+    diversification_max_moves_per_route: Optional[int] = 80
     diversification_accept_non_improving: bool = True
+
+    # Optional hard stop by number of ATS segments.
+    max_segments: Optional[int] = None
 
 
 @dataclass
@@ -63,6 +66,8 @@ class AtsResult:
     current_eval: FitnessResult
     initial_solution: Solution
     initial_eval: FitnessResult
+    best_multi_visit_solution: Optional[Solution]
+    best_multi_visit_eval: Optional[FitnessResult]
     segments_run: int
     diversification_rounds: int
     weights: Dict[str, float] = field(default_factory=dict)
@@ -190,6 +195,8 @@ def adaptive_tabu_search(
 
     best = Solution.from_legacy(current.to_legacy())
     best_eval = current_eval
+    best_multi_visit_solution: Optional[Solution] = None
+    best_multi_visit_eval: Optional[FitnessResult] = None
 
     neighborhood_generators: Dict[str, Callable[..., List[TruckNeighbor]]] = {
         "(1,0)": generate_truck_neighbors_move_1_0,
@@ -219,7 +226,27 @@ def adaptive_tabu_search(
             out.append(legs)
         return out
 
+    def _multi_visit_trip_count(sol: Solution) -> int:
+        return sum(1 for trip in sol.drone_queue if trip.is_multi_visit)
+
+    def _update_best_multi_visit(sol: Solution, ev: FitnessResult) -> None:
+        nonlocal best_multi_visit_solution, best_multi_visit_eval
+        if not ev.feasible:
+            return
+        if not sol.has_multi_visit_trip():
+            return
+        if (
+            best_multi_visit_eval is None
+            or _is_better(_key_from_eval(ev), _key_from_eval(best_multi_visit_eval))
+        ):
+            best_multi_visit_solution = Solution.from_legacy(sol.to_legacy())
+            best_multi_visit_eval = ev
+
+    _update_best_multi_visit(current, current_eval)
+
     while no_improve_div < cfg.div:
+        if cfg.max_segments is not None and segments_run >= cfg.max_segments:
+            break
         segments_run += 1
         if verbose:
             print(
@@ -283,6 +310,7 @@ def adaptive_tabu_search(
 
             current = candidate
             current_eval = cand_eval
+            _update_best_multi_visit(current, current_eval)
             used[chosen] += 1
             _mark_tabu(selected, tabu, iteration, tenure)
             iteration += 1
@@ -309,6 +337,12 @@ def adaptive_tabu_search(
                     "current_queue": _queue_of(current),
                     "best_routes": _routes_of(best),
                     "best_queue": _queue_of(best),
+                    "best_multi_visit_objective": (
+                        None if best_multi_visit_eval is None else best_multi_visit_eval.objective
+                    ),
+                    "best_multi_visit_trip_count": (
+                        0 if best_multi_visit_solution is None else _multi_visit_trip_count(best_multi_visit_solution)
+                    ),
                     "weights": dict(weights),
                     "diversification_applied": False,
                     "diversification_improved_best": False,
@@ -338,6 +372,7 @@ def adaptive_tabu_search(
         if div_eval.feasible:
             current = diversified
             current_eval = div_eval
+            _update_best_multi_visit(current, current_eval)
             if _is_better(_key_from_eval(div_eval), _key_from_eval(best_eval)):
                 best = Solution.from_legacy(diversified.to_legacy())
                 best_eval = div_eval
@@ -360,6 +395,12 @@ def adaptive_tabu_search(
                 "current_queue": _queue_of(current),
                 "best_routes": _routes_of(best),
                 "best_queue": _queue_of(best),
+                "best_multi_visit_objective": (
+                    None if best_multi_visit_eval is None else best_multi_visit_eval.objective
+                ),
+                "best_multi_visit_trip_count": (
+                    0 if best_multi_visit_solution is None else _multi_visit_trip_count(best_multi_visit_solution)
+                ),
                 "weights": dict(weights),
                 "diversification_applied": True,
                 "diversification_improved_best": pbest_improved_by_div,
@@ -373,6 +414,8 @@ def adaptive_tabu_search(
         current_eval=current_eval,
         initial_solution=initial,
         initial_eval=initial_eval,
+        best_multi_visit_solution=best_multi_visit_solution,
+        best_multi_visit_eval=best_multi_visit_eval,
         segments_run=segments_run,
         diversification_rounds=diversification_rounds,
         weights=weights,
