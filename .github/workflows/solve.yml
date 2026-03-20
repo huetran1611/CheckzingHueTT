@@ -1,0 +1,43 @@
+# .github/workflows/solve.yml
+name: Solve All Instances
+on: [push, workflow_dispatch]
+
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install parallel
+        run: sudo apt-get update && sudo apt-get install -y parallel
+
+      - name: Build solver
+        run: g++ -std=c++17 C_Version/Function.cpp -O2 -o C_Version/read_data
+
+      - name: Run all configs (3 proc in parallel, 2h timeout each)
+        run: |
+          set -e
+          mkdir -p results
+          FILES=$(find test_data/data_demand_random_50_batch_all1_equal_cluster -type f -name '*.dat' | sort)
+          A_VALUES="4 8"
+          L_VALUES="60 90 120"
+          REPS=3
+          gen_jobs() {
+            for f in $FILES; do
+              base=$(basename "$f" .dat)
+              for a in $A_VALUES; do
+                for l in $L_VALUES; do
+                  for r in $(seq 1 $REPS); do
+                    echo "./C_Version/read_data $f $a $l > results/${base}_A${a}_L${l}_r${r}.log"
+                  done
+                done
+              done
+            done
+          }
+          gen_jobs | parallel -j3 --timeout 7200
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-logs
+          path: results/
