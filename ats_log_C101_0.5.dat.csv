@@ -1,0 +1,9 @@
+seg,iter,div_round,nid,fit_cur,fit_best_global,fit_best_segment,improved,multi_visit,best_multi_fit
+0,0,0,0,135,135,135,1,0,inf
+0,1,0,1,131,131,131,1,0,inf
+0,2,0,2,131,131,131,0,0,inf
+0,3,0,0,131,131,131,0,0,inf
+0,4,0,0,130,130,130,1,0,inf
+0,5,0,0,123,123,123,1,0,inf
+-1,-1,0,-1,123,123,123,0,0,inf
+-1,-1,1,-1,123,123,123,0,0,inf
