@@ -44,36 +44,14 @@ jobs:
           cat cmds.txt
           parallel -j3 --timeout 7200 < cmds.txt
           # write per-run metadata
-          python - <<'PY'
-            import re, json, pathlib
-            logs = [f"results/${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r{r}.log"
-                    for r in range(1, int("${{ matrix.task.reps }}")+1)]
-
-            def extract(path):
-                p = pathlib.Path(path)
-                if not p.exists():
-                    return None, None
-                txt = p.read_text()
-                vals = [float(x) for x in re.findall(r'(?:Fitness_full \\(makespan\\)|Objective \\(full\\) makespan|Makespan:)\\s*[: ]\\s*([0-9]+(?:\\.[0-9]+)?)', txt)]
-                best_fit = min(vals) if vals else None
-                mvs = [float(x) for x in re.findall(r'best multi-visit makespan:\\s*([0-9]+(?:\\.[0-9]+)?)', txt, flags=re.IGNORECASE)]
-                best_mv = min(mvs) if mvs else None
-                return best_fit, best_mv
-
-            for idx, lp in enumerate(logs, 1):
-                bf, bmv = extract(lp)
-                meta = {
-                    "job_id": int("${{ matrix.task.job_id }}"),
-                    "run_index": idx,
-                    "instance": "${{ matrix.task.instance }}"),
-                    "A": float("${{ matrix.task.A }}"),
-                    "L": float("${{ matrix.task.L }}"),
-                    "best_fitness": bf,
-                    "best_multi_fitness": bmv,
-                    "log": pathlib.Path(lp).name,
-                }
-                json.dump(meta, open(f"results/meta_run{idx}.json","w"), indent=2)
-          PY
+          python gha_write_run_meta.py \
+            --results-dir results \
+            --base "${{ matrix.task.base }}" \
+            --a "${{ matrix.task.A }}" \
+            --l "${{ matrix.task.L }}" \
+            --reps "${{ matrix.task.reps }}" \
+            --job-id "${{ matrix.task.job_id }}" \
+            --instance "${{ matrix.task.instance }}"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
