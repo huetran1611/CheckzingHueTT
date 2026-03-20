@@ -523,8 +523,8 @@ static Solution diversify_solution(const Params &p, const Solution &s, std::mt19
 
 static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2.0, int DIV = 3) {
     // Exploration settings tuned per request:
-    int NIMP = 20;          // iterations without improvement to end a segment
-    SEG = 4;                // segments without improvement before diversification
+    int NIMP = 50;          // iterations without improvement to end a segment
+    SEG = 10;                // segments without improvement before diversification
     DIV = 3;                // diversification rounds without improvement to stop
     const int neigh_count = 3; // truck neighborhoods only
     std::vector<double> weight(neigh_count, 1.0 / neigh_count);

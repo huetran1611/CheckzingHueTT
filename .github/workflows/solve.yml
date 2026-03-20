@@ -22,7 +22,7 @@ jobs:
   solve:
     needs: build-matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 130
+    timeout-minutes: 140
     strategy:
       fail-fast: false
       matrix:
@@ -43,8 +43,37 @@ jobs:
           done
           cat cmds.txt
           parallel -j3 --timeout 7200 < cmds.txt
-          # write metadata
-          python -c "import json; meta={'job_id':int('${{ matrix.task.job_id }}'),'instance':'${{ matrix.task.instance }}','A':float('${{ matrix.task.A }}'),'L':float('${{ matrix.task.L }}'),'reps':int('${{ matrix.task.reps }}'),'logs':[f\"${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r{r}.log\" for r in range(1,int('${{ matrix.task.reps }}')+1)]}; json.dump(meta, open('results/meta.json','w'), indent=2)"
+          # write per-run metadata
+          python - <<'PY'
+            import re, json, pathlib
+            logs = [f"results/${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r{r}.log"
+                    for r in range(1, int("${{ matrix.task.reps }}")+1)]
+
+            def extract(path):
+                p = pathlib.Path(path)
+                if not p.exists():
+                    return None, None
+                txt = p.read_text()
+                vals = [float(x) for x in re.findall(r'(?:Fitness_full \\(makespan\\)|Objective \\(full\\) makespan|Makespan:)\\s*[: ]\\s*([0-9]+(?:\\.[0-9]+)?)', txt)]
+                best_fit = min(vals) if vals else None
+                mvs = [float(x) for x in re.findall(r'best multi-visit makespan:\\s*([0-9]+(?:\\.[0-9]+)?)', txt, flags=re.IGNORECASE)]
+                best_mv = min(mvs) if mvs else None
+                return best_fit, best_mv
+
+            for idx, lp in enumerate(logs, 1):
+                bf, bmv = extract(lp)
+                meta = {
+                    "job_id": int("${{ matrix.task.job_id }}"),
+                    "run_index": idx,
+                    "instance": "${{ matrix.task.instance }}"),
+                    "A": float("${{ matrix.task.A }}"),
+                    "L": float("${{ matrix.task.L }}"),
+                    "best_fitness": bf,
+                    "best_multi_fitness": bmv,
+                    "log": pathlib.Path(lp).name,
+                }
+                json.dump(meta, open(f"results/meta_run{idx}.json","w"), indent=2)
+          PY
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -63,7 +92,7 @@ jobs:
           path: downloaded
       - name: Build summary
         run: |
-          python -c "import json,pathlib,csv; rows=[json.load(open(p)) for p in pathlib.Path('downloaded').rglob('meta.json') if p.is_file()]; out=pathlib.Path('summary.csv'); f=open(out,'w',newline=''); w=csv.DictWriter(f,fieldnames=['job_id','instance','A','L','reps','logs']); w.writeheader(); w.writerows(sorted(rows,key=lambda x:x['job_id'])); f.close(); print(f'Wrote {len(rows)} rows to {out}')"
+          python -c "import json,pathlib,csv; rows=[json.load(open(p)) for p in pathlib.Path('downloaded').rglob('meta_run*.json') if p.is_file()]; out=pathlib.Path('summary.csv'); f=open(out,'w',newline=''); w=csv.DictWriter(f,fieldnames=['job_id','run_index','instance','A','L','best_fitness','best_multi_fitness','log']); w.writeheader(); w.writerows(sorted(rows,key=lambda x:(x['job_id'], x.get('run_index',0)))); f.close(); print(f'Wrote {len(rows)} rows to {out}')"
       - name: Upload summary
         uses: actions/upload-artifact@v4
         with:
