@@ -3,41 +3,124 @@ name: Solve All Instances
 on: [push, workflow_dispatch]
 
 jobs:
-  solve:
+  build-matrix:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.make-matrix.outputs.matrix }}
+      total: ${{ steps.make-matrix.outputs.total }}
     steps:
       - uses: actions/checkout@v4
+      - name: Build matrix
+        id: make-matrix
+        run: |
+          python - <<'PY' > matrix.json
+            import glob, json, os
+            FILES = sorted(glob.glob("test_data/data_demand_random_50_batch_all1_equal_cluster/*.dat"))
+            A_VALUES = [4,8]
+            L_VALUES = [60,90,120]
+            jobs = []
+            job_id = 0
+            for f in FILES:
+                base = os.path.basename(f)
+                for a in A_VALUES:
+                    for l in L_VALUES:
+                        job_id += 1
+                        jobs.append({
+                            "job_id": job_id,
+                            "instance": f,
+                            "base": base,
+                            "A": a,
+                            "L": l,
+                            "reps": 3
+                        })
+            json.dump(jobs, open("matrix.json","w"))
+            print(json.dumps(jobs))
+          PY
+          TOTAL=$(python - <<'PY'
+            import json
+            print(len(json.load(open("matrix.json"))))
+          PY
+          )
+          echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "Total jobs: $TOTAL"
 
-      - name: Install parallel
+  solve:
+    needs: build-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
         run: sudo apt-get update && sudo apt-get install -y parallel
-
       - name: Build solver
         run: g++ -std=c++17 C_Version/Function.cpp -O2 -o C_Version/read_data
-
-      - name: Run all configs (3 proc in parallel, 2h timeout each)
+      - name: Run task (3 procs parallel per job, 2h timeout per proc)
         run: |
-          set -e
           mkdir -p results
-          FILES=$(find test_data/data_demand_random_50_batch_all1_equal_cluster -type f -name '*.dat' | sort)
-          A_VALUES="4 8"
-          L_VALUES="60 90 120"
-          REPS=3
-          gen_jobs() {
-            for f in $FILES; do
-              base=$(basename "$f" .dat)
-              for a in $A_VALUES; do
-                for l in $L_VALUES; do
-                  for r in $(seq 1 $REPS); do
-                    echo "./C_Version/read_data $f $a $l > results/${base}_A${a}_L${l}_r${r}.log"
-                  done
-                done
-              done
-            done
-          }
-          gen_jobs | parallel -j3 --timeout 7200
-
-      - name: Upload logs
+          # Build command list for 3 repetitions of this config
+          : > cmds.txt
+          for r in $(seq 1 ${{ matrix.task.reps }}); do
+            echo "./C_Version/read_data '${{ matrix.task.instance }}' '${{ matrix.task.A }}' '${{ matrix.task.L }}' > results/${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r${r}.log" >> cmds.txt
+          done
+          cat cmds.txt
+          parallel -j3 --timeout 7200 < cmds.txt
+          # write metadata
+          python - <<'PY'
+            import json, os
+            meta = {
+              "job_id": int("${{ matrix.task.job_id }}"),
+              "instance": "${{ matrix.task.instance }}",
+              "A": float("${{ matrix.task.A }}"),
+              "L": float("${{ matrix.task.L }}"),
+              "reps": int("${{ matrix.task.reps }}"),
+              "logs": [
+                f"${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r{r}.log"
+                for r in range(1, int("${{ matrix.task.reps }}")+1)
+              ],
+            }
+            json.dump(meta, open("results/meta.json","w"), indent=2)
+          PY
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: solver-logs
+          name: solve-job-${{ matrix.task.job_id }}
           path: results/
+
+  summarize:
+    needs: [build-matrix, solve]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+      - name: Build summary
+        run: |
+          python - <<'PY'
+            import json, pathlib, csv
+            rows=[]
+            for meta_path in pathlib.Path("downloaded").rglob("meta.json"):
+                try:
+                    data=json.load(open(meta_path))
+                    rows.append(data)
+                except Exception:
+                    pass
+            out_csv=pathlib.Path("summary.csv")
+            with open(out_csv,"w",newline="") as f:
+                w=csv.DictWriter(f,fieldnames=["job_id","instance","A","L","reps","logs"])
+                w.writeheader()
+                w.writerows(sorted(rows,key=lambda x:x["job_id"]))
+            print(f"Wrote {len(rows)} rows to {out_csv}")
+          PY
+      - name: Upload summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: solve-summary
+          path: summary.csv
