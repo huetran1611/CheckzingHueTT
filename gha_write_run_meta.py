@@ -194,7 +194,12 @@ def compute_solution_stats(solution, instance):
     customers_per_trip = []
     multi_visit_count = 0
     for trip in drone_trips:
-        if len(trip) > 1:
+        trip_trucks = set()
+        for city, pkgs in trip:
+            tid, _ = infer_truck_for_event(city, pkgs)
+            if tid is not None:
+                trip_trucks.add(tid)
+        if len(trip_trucks) >= 2:
             multi_visit_count += 1
         customers_per_trip.append(sum(len(pkgs) for _, pkgs in trip))
         last = 0
