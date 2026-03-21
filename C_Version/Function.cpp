@@ -14,11 +14,15 @@
 #include <limits>
 #include <random>
 #include <chrono>
+#include <cctype>
+#include <unistd.h>
 #include "Solution.hpp"
 using namespace std;
 static std::string g_data_name;
 static constexpr double kSolverTimeLimitSec = 150.0 * 60.0; // 150 minutes
 static std::chrono::steady_clock::time_point g_solve_start;
+static bool g_has_best_multi_solution = false;
+static Solution g_best_multi_solution;
 
 static inline double elapsed_solver_seconds() {
     using namespace std::chrono;
@@ -62,6 +66,10 @@ struct TruckTimeline {
 // forward declarations
 static double truck_only_makespan(const Params &p, const Solution &s);
 static void print_truck_routes(const Solution &s);
+static std::string sanitize_token(const std::string &s);
+static std::string format_scalar(double v);
+static void print_solution_compact(std::ostream &os, const Solution &sol, const Params &p);
+static std::string write_solution_json(const Solution &sol, const Params &p, const std::string &tag);
 static bool validate_solution(const Params &p, const Solution &sol, std::string &reason);
 static double truck_arrival_at(const Solution &sol, const std::vector<TruckTimeline> &tls, int truck_id, int customer);
 static int route_pos(const Solution &s, int truck_id, int customer);
@@ -663,8 +671,12 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
     if (best_multi_fit < std::numeric_limits<double>::infinity()) {
         std::cout << "[ATS] best multi-visit makespan: " << best_multi_fit << "\n";
         print_truck_routes(best_multi_sol);
+        g_has_best_multi_solution = true;
+        g_best_multi_solution = best_multi_sol;
     } else {
         std::cout << "[ATS] no multi-visit solution found during search\n";
+        g_has_best_multi_solution = false;
+        g_best_multi_solution = Solution{};
     }
 
     // write log to CSV
@@ -710,6 +722,135 @@ static bool has_multi_visit(const Solution &s);
 static bool has_multi_visit(const Solution &s) {
     for (const auto &t : s.drone_queue) if (t.events.size() > 1) return true;
     return false;
+}
+
+static std::string sanitize_token(const std::string &s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char ch : s) {
+        if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '-' || ch == '.') out.push_back(ch);
+        else out.push_back('_');
+    }
+    return out;
+}
+
+static std::string format_scalar(double v) {
+    std::ostringstream oss;
+    if (std::fabs(v - std::round(v)) < 1e-9) oss << static_cast<long long>(std::llround(v));
+    else {
+        oss << std::fixed << std::setprecision(3) << v;
+        std::string t = oss.str();
+        while (!t.empty() && t.back() == '0') t.pop_back();
+        if (!t.empty() && t.back() == '.') t.pop_back();
+        return t;
+    }
+    return oss.str();
+}
+
+static void print_solution_compact(std::ostream &ofs, const Solution &sol, const Params &p) {
+    // Format:
+    // solution = [ [truck routes], [drone trips] ]
+    // Truck stop entry: [city, packages_received_at_city]
+    // At first depot (0): packages loaded by truck (not resupplied by drone).
+    std::vector<char> is_resupplied(p.customers.size(), 0);
+    std::unordered_map<long long, std::vector<int>> inferred_resupply;
+    auto make_key = [](int truck_id, int city) -> long long {
+        return (static_cast<long long>(truck_id) << 32) ^ static_cast<unsigned int>(city);
+    };
+    for (const auto &trip : sol.drone_queue) {
+        for (const auto &ev : trip.events) {
+            auto &bucket = inferred_resupply[make_key(ev.truck_id, ev.rendezvous_customer)];
+            bucket.insert(bucket.end(), ev.packages.begin(), ev.packages.end());
+            for (auto pkg : ev.packages) {
+                if (pkg >= 0 && pkg < static_cast<int>(is_resupplied.size())) is_resupplied[pkg] = 1;
+            }
+        }
+    }
+
+    ofs << "solution = [\n";
+    ofs << "    [\n";
+    for (size_t t = 0; t < sol.trucks.size(); ++t) {
+        const auto &tr = sol.trucks[t];
+        std::vector<int> depot_loaded;
+        std::vector<char> seen(p.customers.size(), 0);
+        for (size_t i = 1; i + 1 < tr.stops.size(); ++i) {
+            int cust = tr.stops[i].customer;
+            if (cust > 0 && cust < static_cast<int>(seen.size()) && !seen[cust] && !is_resupplied[cust]) {
+                seen[cust] = 1;
+                depot_loaded.push_back(cust);
+            }
+        }
+
+        ofs << "        [\n";
+        for (size_t i = 0; i < tr.stops.size(); ++i) {
+            const auto &st = tr.stops[i];
+            if (i + 1 == tr.stops.size() && st.customer == 0) continue; // omit final depot
+            ofs << "            [" << st.customer << ", [";
+            std::vector<int> pkgs;
+            if (i == 0) {
+                pkgs = depot_loaded;
+            } else {
+                auto it = inferred_resupply.find(make_key(tr.truck_id, st.customer));
+                if (it != inferred_resupply.end()) pkgs = it->second;
+                else pkgs = st.loaded_from_drone;
+            }
+            for (size_t j = 0; j < pkgs.size(); ++j) {
+                if (j) ofs << ", ";
+                ofs << pkgs[j];
+            }
+            ofs << "]]";
+            bool has_more = false;
+            for (size_t k = i + 1; k < tr.stops.size(); ++k) {
+                if (!(k + 1 == tr.stops.size() && tr.stops[k].customer == 0)) { has_more = true; break; }
+            }
+            if (has_more) ofs << ",";
+            ofs << "\n";
+        }
+        ofs << "        ]";
+        if (t + 1 < sol.trucks.size()) ofs << ",";
+        ofs << "\n";
+    }
+    ofs << "    ],\n";
+    ofs << "    [\n";
+    for (size_t q = 0; q < sol.drone_queue.size(); ++q) {
+        const auto &trip = sol.drone_queue[q];
+        ofs << "        [\n";
+        for (size_t e = 0; e < trip.events.size(); ++e) {
+            const auto &ev = trip.events[e];
+            ofs << "            [" << ev.rendezvous_customer << ", [";
+            for (size_t k = 0; k < ev.packages.size(); ++k) {
+                if (k) ofs << ", ";
+                ofs << ev.packages[k];
+            }
+            ofs << "]]";
+            if (e + 1 < trip.events.size()) ofs << ",";
+            ofs << "\n";
+        }
+        ofs << "        ]";
+        if (q + 1 < sol.drone_queue.size()) ofs << ",";
+        ofs << "\n";
+    }
+    ofs << "    ]\n";
+    ofs << "]\n";
+}
+
+static std::string write_solution_json(const Solution &sol, const Params &p, const std::string &tag) {
+    const char* out_dir_env = std::getenv("SOL_OUT_DIR");
+    std::string out_dir = out_dir_env ? out_dir_env : ".";
+    std::ostringstream name;
+    name << out_dir << "/sol_" << tag
+         << "_" << sanitize_token(g_data_name)
+         << "_A" << format_scalar(p.M_d)
+         << "_L" << format_scalar(p.L_d)
+         << "_pid" << static_cast<long long>(::getpid())
+         << ".txt";
+    std::string path = name.str();
+
+    std::ofstream ofs(path);
+    if (!ofs) return std::string();
+
+    print_solution_compact(ofs, sol, p);
+    return path;
 }
 
 // Lightweight drone LS: single pass, three operators, first-improve only.
@@ -1903,6 +2044,28 @@ int main(int argc, char** argv){
     }
     std::cout << "Makespan: " << sim.makespan << " (truck max " << *max_element(sim.truck_return.begin(), sim.truck_return.end())
               << ", drone max " << sim.max_drone_finish << ")\n";
+    std::cout << "[SOL] best solution detail:\n";
+    print_solution_compact(std::cout, sol, p);
+
+    std::string best_path = write_solution_json(sol, p, "best");
+    if (!best_path.empty()) {
+        std::cout << "[SOL] best solution file: " << best_path << "\n";
+    } else {
+        std::cout << "[SOL] best solution file: (write failed)\n";
+    }
+
+    if (g_has_best_multi_solution) {
+        std::cout << "[SOL] best multi-visit solution detail:\n";
+        print_solution_compact(std::cout, g_best_multi_solution, p);
+        std::string best_multi_path = write_solution_json(g_best_multi_solution, p, "best_multi");
+        if (!best_multi_path.empty()) {
+            std::cout << "[SOL] best multi-visit solution file: " << best_multi_path << "\n";
+        } else {
+            std::cout << "[SOL] best multi-visit solution file: (write failed)\n";
+        }
+    } else {
+        std::cout << "[SOL] best multi-visit solution file: (not found)\n";
+    }
     } catch (const std::exception &ex) {
         std::cerr << "Error: " << ex.what() << "\n";
         return 1;
