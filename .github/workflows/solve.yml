@@ -22,7 +22,7 @@ jobs:
   solve:
     needs: build-matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 140
+    timeout-minutes: 200
     strategy:
       fail-fast: false
       matrix:
@@ -33,7 +33,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y parallel
       - name: Build solver
         run: g++ -std=c++17 C_Version/Function.cpp -O2 -o C_Version/read_data
-      - name: Run task (3 procs parallel per job, 2h timeout per proc)
+      - name: Run task (3 procs parallel per job, solver self-timeout 150m)
         run: |
           mkdir -p results
           # Build command list for 3 repetitions of this config
@@ -42,7 +42,7 @@ jobs:
             echo "./C_Version/read_data '${{ matrix.task.instance }}' '${{ matrix.task.A }}' '${{ matrix.task.L }}' > results/${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r${r}.log" >> cmds.txt
           done
           cat cmds.txt
-          parallel -j3 --timeout 7200 < cmds.txt
+          parallel -j3 < cmds.txt
           # write per-run metadata
           python gha_write_run_meta.py \
             --results-dir results \

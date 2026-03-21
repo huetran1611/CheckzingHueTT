@@ -13,9 +13,21 @@
 #include <unordered_map>
 #include <limits>
 #include <random>
+#include <chrono>
 #include "Solution.hpp"
 using namespace std;
 static std::string g_data_name;
+static constexpr double kSolverTimeLimitSec = 150.0 * 60.0; // 150 minutes
+static std::chrono::steady_clock::time_point g_solve_start;
+
+static inline double elapsed_solver_seconds() {
+    using namespace std::chrono;
+    return duration_cast<duration<double>>(steady_clock::now() - g_solve_start).count();
+}
+
+static inline bool solver_time_limit_reached() {
+    return elapsed_solver_seconds() >= kSolverTimeLimitSec;
+}
 
 
 struct Customer {
@@ -523,7 +535,7 @@ static Solution diversify_solution(const Params &p, const Solution &s, std::mt19
 
 static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2.0, int DIV = 3) {
     // Exploration settings tuned per request:
-    int NIMP = 50;          // iterations without improvement to end a segment
+    int NIMP = 20;          // iterations without improvement to end a segment
     SEG = 10;                // segments without improvement before diversification
     DIV = 3;                // diversification rounds without improvement to stop
     const int neigh_count = 3; // truck neighborhoods only
@@ -542,20 +554,24 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
 
     int seg_no_improve = 0;
     int div_no_improve = 0;
+    bool stopped_by_time = false;
     std::mt19937 rng{std::random_device{}()};
 
     int div_round = 0;
     log_entries.clear();
     while (div_no_improve < DIV) {
+        if (solver_time_limit_reached()) { stopped_by_time = true; break; }
         seg_no_improve = 0;
         int seg_idx = 0;
         while (seg_no_improve < SEG) {
+            if (solver_time_limit_reached()) { stopped_by_time = true; break; }
             std::fill(score.begin(), score.end(), 0.0);
             std::fill(use_cnt.begin(), use_cnt.end(), 0);
             int no_imp_iter = 0;
             int iter_idx = 0;
             bool first_iter_segment = true;
             while (no_imp_iter < NIMP) {
+                if (solver_time_limit_reached()) { stopped_by_time = true; break; }
                 // roulette selection
                 std::discrete_distribution<int> dist(weight.begin(), weight.end());
                 int nid = dist(rng);
@@ -596,6 +612,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                 log_entries.push_back({seg_idx, iter_idx, div_round, nid, res.second, best_fit, seg_best_fit, improved_global, has_multi_visit(cur), best_multi_fit});
                 iter_idx++;
             }
+            if (stopped_by_time) break;
 
             // segment ends
             if (best_fit + 1e-9 < fitness_full(p, s, nullptr).second) s = best_sol;
@@ -607,6 +624,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                 if (use_cnt[i] > 0) weight[i] = (1 - gamma4) * weight[i] + gamma4 * (score[i] / use_cnt[i]);
             }
         }
+        if (stopped_by_time) break;
 
         // diversification phase
         Solution div_sol = diversify_solution(p, best_sol, rng);
@@ -626,7 +644,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
     }
 
     // Final attempt: run merge_adjacent_trips once on best_sol to seek a multi-visit improvement before returning.
-    {
+    if (!stopped_by_time) {
         Solution final_sol = best_sol;
         if (merge_adjacent_trips(p, final_sol)) {
             double ts = 0.0; auto res = fitness_full(p, final_sol, &ts);
@@ -636,6 +654,10 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
         }
     }
     s = best_sol;
+    if (stopped_by_time) {
+        std::cout << "[ATS] time limit reached at " << elapsed_solver_seconds()
+                  << "s, returning best-so-far\n";
+    }
 
     // Report best multi-visit solution found (if any), even if not global best
     if (best_multi_fit < std::numeric_limits<double>::infinity()) {
@@ -1780,6 +1802,7 @@ static void read_instance(const string &path, Params &p){
 
 int main(int argc, char** argv){
     try {
+        g_solve_start = std::chrono::steady_clock::now();
         // Khi chạy từ thư mục C_Version, file dữ liệu nằm ở ../test_data/...
         if (argc < 2) {
             std::cerr << "Usage: " << argv[0] << " <data_file> [M_d] [L_d]\n";
@@ -1824,6 +1847,7 @@ int main(int argc, char** argv){
 
     // ATS full (truck neighborhoods + drone local search per iteration)
     int n_cust = (int)p.customers.size() - 1;
+    (void)n_cust;
     ats_full(p, sol, /*SEG*/4, /*theta*/2.0, /*DIV*/3);
     std::cout << "--- After ATS ---\n";
     auto sim_tab = simulate_with_log(p, sol);
@@ -1835,6 +1859,11 @@ int main(int argc, char** argv){
     std::cout << "[LS] start fitness: " << base_fit << "\n";
     bool improved_cycle = true;
     while (improved_cycle) {
+        if (solver_time_limit_reached()) {
+            std::cout << "[LS] time limit reached at " << elapsed_solver_seconds()
+                      << "s, returning current best\n";
+            break;
+        }
         improved_cycle = false;
         if (relocate_sync_point_first_improve(p, sol)) {
             double f = fitness_full(p, sol).second;
