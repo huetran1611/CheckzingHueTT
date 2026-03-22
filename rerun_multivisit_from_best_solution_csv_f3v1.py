@@ -17,6 +17,12 @@ VALIDATE_RE = re.compile(
     r"max_drone_wait\s+(?P<max_wait>[0-9]+(?:\.[0-9]+)?)\s+"
     r"total_drone_wait\s+(?P<total_wait>[0-9]+(?:\.[0-9]+)?)"
 )
+VALIDATE_STATS_RE = re.compile(
+    r"\[VALIDATE_STATS\]\s+OK\s+avg_drone_used\s+(?P<avg_used>[0-9]+(?:\.[0-9]+)?)\s+"
+    r"max_drone_used\s+(?P<max_used>[0-9]+(?:\.[0-9]+)?)\s+"
+    r"trips\s+(?P<trips>[0-9]+)\s+"
+    r"sigma\s+(?P<sigma>[0-9]+(?:\.[0-9]+)?)"
+)
 
 
 def normalize_solution_text(file_text: str) -> str:
@@ -77,7 +83,7 @@ def ensure_solver_binary() -> None:
 
 def validate_solution_file(
     solver_bin: str, instance: str, a: str, l: str, seed_file: pathlib.Path
-) -> Tuple[bool, str, Optional[float]]:
+) -> Tuple[bool, str, Optional[float], Optional[int], Optional[int]]:
     env = dict(os.environ)
     env["VALIDATE_ONLY"] = "1"
     env.setdefault("SOLVER_TIME_LIMIT_SEC", "5")
@@ -86,11 +92,41 @@ def validate_solution_file(
     out = (p.stdout or "").strip()
     line = next((ln for ln in out.splitlines() if "[VALIDATE]" in ln), out.splitlines()[-1] if out else "")
     if p.returncode != 0 or "[VALIDATE] OK" not in out:
-        return False, line or f"exit={p.returncode}", None
+        return False, line or f"exit={p.returncode}", None, None, None
     m = VALIDATE_RE.search(line)
     if not m:
-        return False, f"cannot parse validate output: {line}", None
-    return True, line, float(m.group("makespan"))
+        return False, f"cannot parse validate output: {line}", None, None, None
+    mk = float(m.group("makespan"))
+    mv = int(m.group("multi"))
+    trips = None
+    for ln in out.splitlines():
+        if "[VALIDATE_STATS]" not in ln:
+            continue
+        m2 = VALIDATE_STATS_RE.search(ln.strip())
+        if m2:
+            trips = int(m2.group("trips"))
+            break
+    return True, line, mk, mv, trips
+
+
+def _better_multi(
+    new_mk: float,
+    new_mv: int,
+    new_trips: Optional[int],
+    old_mk: float,
+    old_mv: int,
+    old_trips: Optional[int],
+) -> bool:
+    eps = 1e-9
+    if new_mk + eps < old_mk:
+        return True
+    if abs(new_mk - old_mk) > eps:
+        return False
+    if new_mv != old_mv:
+        return new_mv > old_mv
+    if new_trips is None or old_trips is None:
+        return False
+    return new_trips < old_trips
 
 
 def run_one(row: dict, time_limit_sec: int, out_root: pathlib.Path, solver_bin: str) -> dict:
@@ -108,6 +144,8 @@ def run_one(row: dict, time_limit_sec: int, out_root: pathlib.Path, solver_bin: 
         "new_best_multi_fitness": "",
         "new_best_multi_solution": "",
         "new_best_multi_solution_file": "",
+        "new_best_multi_mv": "",
+        "new_best_multi_trips": "",
         "reason": "",
     }
     if not seed_solution:
@@ -164,8 +202,8 @@ def run_one(row: dict, time_limit_sec: int, out_root: pathlib.Path, solver_bin: 
             out["reason"] = f"multi file missing: {best_multi_path}"
             return out
 
-        ok, msg, mk = validate_solution_file(solver_bin, instance, a, l, multi_file)
-        if not ok or mk is None:
+        ok, msg, mk, mv, trips = validate_solution_file(solver_bin, instance, a, l, multi_file)
+        if not ok or mk is None or mv is None:
             out["status"] = "FAIL"
             out["reason"] = f"multi invalid: {msg}"
             return out
@@ -175,6 +213,8 @@ def run_one(row: dict, time_limit_sec: int, out_root: pathlib.Path, solver_bin: 
         out["new_best_multi_fitness"] = parse_float_or_blank(str(mk))
         out["new_best_multi_solution"] = normalize_solution_text(multi_file.read_text())
         out["new_best_multi_solution_file"] = str(multi_file)
+        out["new_best_multi_mv"] = str(int(mv))
+        out["new_best_multi_trips"] = str(int(trips)) if trips is not None else ""
         if best_multi_mk is not None and abs(best_multi_mk - mk) > 1e-6:
             out["reason"] = f"solver_mk={best_multi_mk} validated_mk={mk}"
         return out
@@ -252,21 +292,42 @@ def main() -> int:
             continue
         ok += 1
         new_fit = parse_float_or_inf(r.get("new_best_multi_fitness", ""))
+        new_mv = int((r.get("new_best_multi_mv") or "0") or "0")
+        new_trips = None
+        try:
+            if (r.get("new_best_multi_trips") or "").strip():
+                new_trips = int(r.get("new_best_multi_trips") or "")
+        except ValueError:
+            new_trips = None
         if new_fit == float("inf"):
             continue
         old_fit = parse_float_or_inf(row.get("best_multi_fitness", ""))
-        if new_fit + 1e-9 < old_fit:
-            row["best_multi_fitness"] = r["new_best_multi_fitness"]
-            row["best_multi_solution"] = r["new_best_multi_solution"]
-            row["best_multi_solution_file"] = r.get("new_best_multi_solution_file", "")
-            improved += 1
-        elif old_fit == float("inf"):
+        old_mv = 0
+        old_trips = None
+        try:
+            old_mv = int((row.get("best_multi_multi_visit_trip_count") or "0") or "0")
+        except ValueError:
+            old_mv = 0
+        try:
+            if (row.get("best_multi_drone_trip_count") or "").strip():
+                old_trips = int(row.get("best_multi_drone_trip_count") or "")
+        except ValueError:
+            old_trips = None
+
+        if old_fit == float("inf"):
             # fill previously-empty multi fields
             row["best_multi_fitness"] = r["new_best_multi_fitness"]
             row["best_multi_solution"] = r["new_best_multi_solution"]
             row["best_multi_solution_file"] = r.get("new_best_multi_solution_file", "")
+            improved += 1
+        elif _better_multi(new_fit, new_mv, new_trips, old_fit, old_mv, old_trips):
+            row["best_multi_fitness"] = r["new_best_multi_fitness"]
+            row["best_multi_solution"] = r["new_best_multi_solution"]
+            row["best_multi_solution_file"] = r.get("new_best_multi_solution_file", "")
+            improved += 1
 
-    out_csv = pathlib.Path("F3V1_batch_init_ats_improved_with_multivisit.csv")
+    in_name = csv_in.name
+    out_csv = pathlib.Path(os.environ.get("F3V1_OUT_CSV", "F3V2_" + in_name))
     with out_csv.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()

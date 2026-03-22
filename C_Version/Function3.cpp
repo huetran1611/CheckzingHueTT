@@ -658,8 +658,17 @@ static inline bool better_lex(
 ) {
     const double eps = 1e-9;
     if (g_ls_phase == 1) {
-        // Phase 1: objective-only improvement.
-        return cand_makespan + eps < cur_makespan;
+        // Phase 1: primarily improve makespan.
+        // Optional guard: when makespan improves, do not accept moves that reduce multi-visit
+        // or increase drone trip count. This matches the goal "reduce fitness, increase multi-visit,
+        // reduce drone trips" but may make search more conservative.
+        if (!(cand_makespan + eps < cur_makespan)) return false;
+        const bool guard_eff = env_bool("LS_PHASE1_EFF_GUARD", false);
+        if (guard_eff) {
+            if (cand_multi < cur_multi) return false;
+            if (cand_drone_trips > cur_drone_trips) return false;
+        }
+        return true;
     }
     if (cand_makespan + eps < cur_makespan) return true;
     if (std::fabs(cand_makespan - cur_makespan) > eps) return false;
