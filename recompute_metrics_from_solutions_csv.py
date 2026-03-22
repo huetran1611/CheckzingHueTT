@@ -240,7 +240,7 @@ def validate_with_stats(
     Optional[float],  # avg_truck_wait
     Optional[float],  # avg_drone_wait
     Optional[int],    # legs
-]:
+    ]:
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
         f.write("solution = " + solution_text.strip() + "\n")
         seed_path = f.name
@@ -248,7 +248,8 @@ def validate_with_stats(
         env = dict(os.environ)
         env["VALIDATE_ONLY"] = "1"
         env.setdefault("SOLVER_TIME_LIMIT_SEC", "5")
-        cmd = ["C_Version/read_data_function2", instance, str(a), str(l), seed_path]
+        solver_bin = env.get("SOLVER_BIN", "C_Version/read_data_function2")
+        cmd = [solver_bin, instance, str(a), str(l), seed_path]
         p = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         out = (p.stdout or "").strip()
         line = next((ln for ln in out.splitlines() if "[VALIDATE]" in ln), out.splitlines()[-1] if out else "")

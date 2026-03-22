@@ -680,6 +680,38 @@ static inline bool better_lex(
     return cand_truck_sum + eps < cur_truck_sum;
 }
 
+// Compare "best seen" solutions consistently (independent of phase).
+// Primary: makespan. If equal: prefer >= multi-visit and <= trip count (strictly better in at least one),
+// then max wait, then total wait, then truck-sum as last tie-break.
+static inline bool better_overall(
+    double cand_makespan,
+    int cand_drone_trips,
+    int cand_multi,
+    double cand_max_drone_wait,
+    double cand_total_drone_wait,
+    double cand_truck_sum,
+    double cur_makespan,
+    int cur_drone_trips,
+    int cur_multi,
+    double cur_max_drone_wait,
+    double cur_total_drone_wait,
+    double cur_truck_sum
+) {
+    const double eps = 1e-9;
+    if (cand_makespan + eps < cur_makespan) return true;
+    if (std::fabs(cand_makespan - cur_makespan) > eps) return false;
+    if (cand_multi != cur_multi || cand_drone_trips != cur_drone_trips) {
+        bool nonworse = (cand_multi >= cur_multi) && (cand_drone_trips <= cur_drone_trips);
+        bool strict = (cand_multi > cur_multi) || (cand_drone_trips < cur_drone_trips);
+        return nonworse && strict;
+    }
+    if (cand_max_drone_wait + eps < cur_max_drone_wait) return true;
+    if (std::fabs(cand_max_drone_wait - cur_max_drone_wait) > eps) return false;
+    if (cand_total_drone_wait + eps < cur_total_drone_wait) return true;
+    if (std::fabs(cand_total_drone_wait - cur_total_drone_wait) > eps) return false;
+    return cand_truck_sum + eps < cur_truck_sum;
+}
+
 static void rebuild_loaded_from_drone_marks(const Params &p, Solution &s) {
     (void)p;
     for (auto &tr : s.trucks) {
@@ -699,6 +731,61 @@ static void rebuild_loaded_from_drone_marks(const Params &p, Solution &s) {
             }
         }
     }
+}
+
+// A small "shake" used only when LS is stuck: reorder trips / reorder events to jump to another basin.
+// This intentionally may worsen objective; caller must keep best-seen and can continue improving from the shaken state.
+static bool drone_shake_feasible(const Params &p, const Solution &s, Solution &out, std::mt19937 &rng) {
+    const int max_tries = env_int("LS_SHAKE_TRIES", 40);
+    if (s.drone_queue.empty()) return false;
+
+    std::uniform_int_distribution<int> move_dist(0, 2);
+    std::uniform_int_distribution<int> trip_dist(0, (int)s.drone_queue.size() - 1);
+
+    for (int tr = 0; tr < max_tries; ++tr) {
+        Solution cand = s;
+        int mv = move_dist(rng);
+
+        if (mv == 0) {
+            // Swap two trips in the queue.
+            if (cand.drone_queue.size() < 2) continue;
+            int i = trip_dist(rng);
+            int j = trip_dist(rng);
+            if (i == j) continue;
+            std::swap(cand.drone_queue[(size_t)i], cand.drone_queue[(size_t)j]);
+        } else if (mv == 1) {
+            // Swap two events inside a trip.
+            int t = trip_dist(rng);
+            auto &evs = cand.drone_queue[(size_t)t].events;
+            if (evs.size() < 2) continue;
+            std::uniform_int_distribution<int> ev_dist(0, (int)evs.size() - 1);
+            int i = ev_dist(rng);
+            int j = ev_dist(rng);
+            if (i == j) continue;
+            std::swap(evs[(size_t)i], evs[(size_t)j]);
+        } else {
+            // Rotate events in a trip (move first to end).
+            int t = trip_dist(rng);
+            auto &evs = cand.drone_queue[(size_t)t].events;
+            if (evs.size() < 2) continue;
+            auto first = evs.front();
+            evs.erase(evs.begin());
+            evs.push_back(std::move(first));
+        }
+
+        rebuild_loaded_from_drone_marks(p, cand);
+        std::string reason;
+        if (!validate_solution(p, cand, reason)) continue;
+        // Also require endurance optimistic checks to keep downstream operators fast.
+        bool ok = true;
+        for (const auto &trp : cand.drone_queue) {
+            if (!trip_endurance_optimistic(p, cand, trp)) { ok = false; break; }
+        }
+        if (!ok) continue;
+        out = std::move(cand);
+        return true;
+    }
+    return false;
 }
 
 static void apply_drone_local_search(const Params &p, Solution &s) {
@@ -725,7 +812,7 @@ static void apply_drone_local_search(const Params &p, Solution &s) {
 	            if (!improved) break;
 	        }
 	    }
-	    g_ls_phase = 2;
+		    g_ls_phase = 2;
 }
 
 static NeighborhoodApplyResult apply_truck_neighborhood(
@@ -977,6 +1064,36 @@ static bool insert_rendezvous_first_improve(const Params &p, Solution &s) {
 }
 
 static bool has_multi_visit(const Solution &s);
+
+static void update_best_multi_solution_if_better(const Params &p, const Solution &cand) {
+    if (!has_multi_visit(cand)) return;
+    if (!g_has_best_multi_solution) {
+        g_has_best_multi_solution = true;
+        g_best_multi_solution = cand;
+        return;
+    }
+    double ts_best = 0.0;
+    auto rb = fitness_full(p, g_best_multi_solution, &ts_best);
+    double ts_cur = 0.0;
+    auto rc = fitness_full(p, cand, &ts_cur);
+    if (!rc.first) return;
+    if (!rb.first) {
+        g_best_multi_solution = cand;
+        return;
+    }
+    int mv_best = multi_visit_trip_count(g_best_multi_solution);
+    int trip_best = (int)g_best_multi_solution.drone_queue.size();
+    auto w_best = drone_wait_metrics(p, g_best_multi_solution);
+
+    int mv_cur = multi_visit_trip_count(cand);
+    int trip_cur = (int)cand.drone_queue.size();
+    auto w_cur = drone_wait_metrics(p, cand);
+
+    if (better_overall(rc.second, trip_cur, mv_cur, w_cur.first, w_cur.second, ts_cur,
+                       rb.second, trip_best, mv_best, w_best.first, w_best.second, ts_best)) {
+        g_best_multi_solution = cand;
+    }
+}
 
 // Adaptive Tabu Search skeleton (no diversification), with roulette-wheel neighborhood selection.
 // Simple diversification: reverse subsequences inside each truck route (excluding depots)
@@ -3916,67 +4033,121 @@ int main(int argc, char** argv){
         std::cout << "[ATS] skipped by SKIP_ATS\n";
     }
 
-	    // Drone local search (2-phase):
-	    // Phase 1: strictly improve makespan.
-	    // Phase 2: keep makespan but improve operational efficiency (multi-visit and/or trip count), then waits.
-	    double base_fit = fitness_full(p, sol).second;
-	    std::cout << "[LS] start fitness: " << base_fit << "\n";
-	    bool ls_multi_only = false;
-	    if (const char *v = std::getenv("LS_MULTI_ONLY")) {
-	        if (*v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T')) ls_multi_only = true;
-	    }
-	    if (ls_multi_only) std::cout << "[LS] mode: multi-only\n";
-	    bool any_improved = true;
-	    while (any_improved) {
-	        if (solver_time_limit_reached()) {
-	            std::cout << "[LS] time limit reached at " << elapsed_solver_seconds()
-	                      << "s, returning current best\n";
-	            break;
-	        }
-	        any_improved = false;
-	        for (int phase = 1; phase <= 2; ++phase) {
-	            g_ls_phase = phase;
-	            std::cout << "[LS] phase " << phase << "\n";
-	            bool improved_cycle = true;
-	            while (improved_cycle) {
-	                if (solver_time_limit_reached()) break;
-	                improved_cycle = false;
-	                if (relocate_sync_point_first_improve(p, sol)) {
-	                    double f = fitness_full(p, sol).second;
-	                    std::cout << "[LS] sync relocation applied, fitness: " << f << "\n";
-	                    improved_cycle = true;
-	                }
-	                if (merge_sync_singletons_relaxed_first_improve(p, sol)) {
-	                    double f = fitness_full(p, sol).second;
-	                    std::cout << "[LS] sync singleton merge applied, fitness: " << f << "\n";
-	                    improved_cycle = true;
-	                }
-	                if (insert_rendezvous_first_improve(p, sol)) {
-	                    double f = fitness_full(p, sol).second;
-	                    std::cout << "[LS] rendezvous insertion applied, fitness: " << f << "\n";
-	                    improved_cycle = true;
-	                }
-	                if (reorder_events_in_trip_first_improve(p, sol)) {
-	                    double f = fitness_full(p, sol).second;
-	                    std::cout << "[LS] intra-trip event reorder applied, fitness: " << f << "\n";
-	                    improved_cycle = true;
-	                }
-	                if (relocate_package_first_improve(p, sol)) {
-	                    double f = fitness_full(p, sol).second;
-	                    std::cout << "[LS] package relocation applied, fitness: " << f << "\n";
-	                    improved_cycle = true;
-	                }
-	                if (reorder_trip_first_improve(p, sol)) {
-	                    double f = fitness_full(p, sol).second;
-	                    std::cout << "[LS] trip reorder applied, fitness: " << f << "\n";
-	                    improved_cycle = true;
-	                }
-	                if (improved_cycle) any_improved = true;
-	            }
-	            if (solver_time_limit_reached()) break;
-	        }
-	    }
-	    g_ls_phase = 2;
+		    // Drone local search (2-phase) with optional "shake on stagnation" (Function3-only):
+		    // Phase 1: strictly improve makespan.
+		    // Phase 2: keep makespan but improve operational efficiency (multi-visit and/or trip count), then waits.
+		    double base_fit = fitness_full(p, sol).second;
+		    std::cout << "[LS] start fitness: " << base_fit << "\n";
+		    bool ls_multi_only = false;
+		    if (const char *v = std::getenv("LS_MULTI_ONLY")) {
+		        if (*v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T')) ls_multi_only = true;
+		    }
+		    if (ls_multi_only) std::cout << "[LS] mode: multi-only\n";
+
+		    // Track best-seen in case we shake (which can worsen temporarily).
+		    Solution best_seen = sol;
+		    double best_sum = 0.0;
+		    auto best_res = fitness_full(p, best_seen, &best_sum);
+		    double best_fit = best_res.first ? best_res.second : std::numeric_limits<double>::infinity();
+		    int best_trip_cnt = (int)best_seen.drone_queue.size();
+		    int best_multi = multi_visit_trip_count(best_seen);
+		    auto best_wait = drone_wait_metrics(p, best_seen);
+		    double best_max_wait = best_wait.first;
+		    double best_total_wait = best_wait.second;
+
+		    auto update_best_seen = [&](const Solution &cand) {
+		        double ts = 0.0;
+		        auto fr = fitness_full(p, cand, &ts);
+		        if (!fr.first) return;
+		        int trip_cnt = (int)cand.drone_queue.size();
+		        int mv = multi_visit_trip_count(cand);
+		        auto w = drone_wait_metrics(p, cand);
+		        if (better_overall(fr.second, trip_cnt, mv, w.first, w.second, ts,
+		                           best_fit, best_trip_cnt, best_multi, best_max_wait, best_total_wait, best_sum)) {
+		            best_seen = cand;
+		            best_fit = fr.second;
+		            best_sum = ts;
+		            best_trip_cnt = trip_cnt;
+		            best_multi = mv;
+		            best_max_wait = w.first;
+		            best_total_wait = w.second;
+		        }
+		    };
+		    update_best_seen(sol);
+		    // Also track best multi-visit encountered, even if subsequent makespan-improving moves remove it.
+		    update_best_multi_solution_if_better(p, sol);
+
+		    const bool shake_on_stag = env_bool("LS_SHAKE_ON_STAGNATION", false);
+		    // Default very large so "run for 10 minutes" won't stop early unless user caps it.
+		    const int max_shakes = env_int("LS_MAX_SHAKES", 1000000);
+		    const int shake_log_every = std::max(1, env_int("LS_SHAKE_LOG_EVERY", 50));
+		    int shake_cnt = 0;
+		    std::mt19937 rng{std::random_device{}()};
+
+		    while (!solver_time_limit_reached()) {
+		        bool any_improved = false;
+		        for (int phase = 1; phase <= 2; ++phase) {
+		            g_ls_phase = phase;
+		            std::cout << "[LS] phase " << phase << "\n";
+		            bool improved_cycle = true;
+		            while (improved_cycle) {
+		                if (solver_time_limit_reached()) break;
+		                improved_cycle = false;
+		                if (relocate_sync_point_first_improve(p, sol)) {
+		                    double f = fitness_full(p, sol).second;
+		                    std::cout << "[LS] sync relocation applied, fitness: " << f << "\n";
+		                    improved_cycle = true;
+		                }
+		                if (merge_sync_singletons_relaxed_first_improve(p, sol)) {
+		                    double f = fitness_full(p, sol).second;
+		                    std::cout << "[LS] sync singleton merge applied, fitness: " << f << "\n";
+		                    improved_cycle = true;
+		                }
+		                if (insert_rendezvous_first_improve(p, sol)) {
+		                    double f = fitness_full(p, sol).second;
+		                    std::cout << "[LS] rendezvous insertion applied, fitness: " << f << "\n";
+		                    improved_cycle = true;
+		                }
+		                if (reorder_events_in_trip_first_improve(p, sol)) {
+		                    double f = fitness_full(p, sol).second;
+		                    std::cout << "[LS] intra-trip event reorder applied, fitness: " << f << "\n";
+		                    improved_cycle = true;
+		                }
+		                if (relocate_package_first_improve(p, sol)) {
+		                    double f = fitness_full(p, sol).second;
+		                    std::cout << "[LS] package relocation applied, fitness: " << f << "\n";
+		                    improved_cycle = true;
+		                }
+		                if (reorder_trip_first_improve(p, sol)) {
+		                    double f = fitness_full(p, sol).second;
+		                    std::cout << "[LS] trip reorder applied, fitness: " << f << "\n";
+		                    improved_cycle = true;
+		                }
+		                if (improved_cycle) {
+		                    any_improved = true;
+		                    update_best_seen(sol);
+		                    update_best_multi_solution_if_better(p, sol);
+		                }
+		            }
+		            if (solver_time_limit_reached()) break;
+		        }
+
+		        if (any_improved) continue;
+		        if (!shake_on_stag) break;
+		        if (shake_cnt >= max_shakes) break;
+		        Solution shaken;
+		        if (!drone_shake_feasible(p, sol, shaken, rng)) break;
+		        sol = std::move(shaken);
+		        shake_cnt++;
+		        if ((shake_cnt % shake_log_every) == 0 || shake_cnt == 1) {
+		            std::cout << "[LS] stagnation shake applied (" << shake_cnt << "/" << max_shakes << ")\n";
+		        }
+		        // Continue improving from this new basin; do not update best_seen here (shake may worsen).
+		    }
+		    g_ls_phase = 2;
+
+		    // Restore best-seen (important when shakes are enabled).
+		    sol = std::move(best_seen);
 
     std::cout << "--- After drone local search init ---\n";
     print_truck_routes(sol);
