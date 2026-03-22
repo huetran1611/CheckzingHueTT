@@ -930,6 +930,28 @@ static bool is_pkg_resupplied(const Solution &s, int pkg) {
     return false;
 }
 
+// `loaded_from_drone` is derived from `drone_queue` and is used by the timing model.
+// Keep it consistent by rebuilding after any move that changes drone rendezvous/packages.
+static void rebuild_loaded_from_drone_marks(const Params &p, Solution &s) {
+    (void)p;
+    for (auto &tr : s.trucks) {
+        for (auto &st : tr.stops) st.loaded_from_drone.clear();
+    }
+    for (const auto &trip : s.drone_queue) {
+        for (const auto &ev : trip.events) {
+            if (ev.truck_id < 0 || ev.truck_id >= (int)s.trucks.size()) continue;
+            auto &stops = s.trucks[ev.truck_id].stops;
+            const int rv = ev.rendezvous_customer;
+            for (auto &st : stops) {
+                if (st.customer == rv) {
+                    st.loaded_from_drone.insert(st.loaded_from_drone.end(), ev.packages.begin(), ev.packages.end());
+                    break;
+                }
+            }
+        }
+    }
+}
+
 // forward declarations for helpers used earlier
 static bool has_multi_visit(const Solution &s);
 
@@ -1012,7 +1034,7 @@ static void print_solution_compact(std::ostream &ofs, const Solution &sol, const
             } else {
                 auto it = inferred_resupply.find(make_key(tr.truck_id, st.customer));
                 if (it != inferred_resupply.end()) pkgs = it->second;
-                else pkgs = st.loaded_from_drone;
+                else pkgs.clear();
             }
             for (size_t j = 0; j < pkgs.size(); ++j) {
                 if (j) ofs << ", ";
@@ -1973,6 +1995,7 @@ static bool relocate_sync_point_first_improve(const Params &p, Solution &s) {
                     from_removed = true;
                 }
 
+                rebuild_loaded_from_drone_marks(p, trial);
                 // quick endurance checks for affected trips (optimistic)
                 if (!trip_endurance_optimistic(p, trial, trial.drone_queue[to_trip])) continue;
                 if (!from_removed && from_trip < trial.drone_queue.size() && !trip_endurance_optimistic(p, trial, trial.drone_queue[from_trip])) continue;
@@ -2032,11 +2055,6 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
         return a.pos < b.pos; // earlier position
     });
 
-    auto add_loaded_mark = [&](Solution &sol,int truck,int pkg){
-        auto &stops = sol.trucks[truck].stops;
-        for (auto &st: stops) if (st.customer == pkg) { st.loaded_from_drone.push_back(pkg); break; }
-    };
-
     auto release_span_ok = [&](const std::vector<int>& pkgs)->bool{
         if (pkgs.empty()) return true;
         int mn = p.customers[pkgs[0]].release, mx = mn, sum = 0;
@@ -2076,25 +2094,33 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                 // try insert into existing trip event
                 bool inserted = false;
                 Solution trial = s;
-                for (auto &trip : trial.drone_queue) {
-                    for (auto &ev : trip.events) {
-                        if (ev.truck_id == k && ev.rendezvous_customer == recv) {
-                            if (trip_load(p, trip) + total_demand > p.M_d + 1e-9) continue;
-                            std::vector<int> merged = ev.packages;
-                            merged.insert(merged.end(), pkgs.begin(), pkgs.end());
-                            if (!release_span_ok(merged)) continue;
-                            ev.packages.swap(merged);
-                            for (int pk : pkgs) add_loaded_mark(trial, k, pk);
-                            if (!trip_endurance_optimistic(p, trial, trip)) { ev.packages = merged; continue; }
-                            double ts_loc = 0.0; auto res = fitness_full(p, trial, &ts_loc);
-                            if (!res.first) { ev.packages = merged; continue; }
-                            double new_fit = res.second;
-                            if (better(new_fit, ts_loc)) { best_fit = new_fit; best_truck_sum = ts_loc; best_sol = std::move(trial); improved_any = true; }
-                            inserted = true;
-                            break;
+                for (size_t tgi = 0; tgi < trial.drone_queue.size() && !inserted; ++tgi) {
+                    for (size_t egi = 0; egi < trial.drone_queue[tgi].events.size() && !inserted; ++egi) {
+                        const auto &ev0 = trial.drone_queue[tgi].events[egi];
+                        if (ev0.truck_id != k || ev0.rendezvous_customer != recv) continue;
+                        if (trip_load(p, trial.drone_queue[tgi]) + total_demand > p.M_d + 1e-9) continue;
+
+                        bool dup = false;
+                        for (int pk : pkgs) {
+                            if (std::find(ev0.packages.begin(), ev0.packages.end(), pk) != ev0.packages.end()) { dup = true; break; }
                         }
+                        if (dup) continue;
+
+                        Solution cand = trial;
+                        auto &evm = cand.drone_queue[tgi].events[egi];
+                        std::vector<int> merged = evm.packages;
+                        merged.insert(merged.end(), pkgs.begin(), pkgs.end());
+                        if (!release_span_ok(merged)) continue;
+                        evm.packages.swap(merged);
+
+                        rebuild_loaded_from_drone_marks(p, cand);
+                        if (!trip_endurance_optimistic(p, cand, cand.drone_queue[tgi])) continue;
+                        double ts_loc = 0.0; auto res = fitness_full(p, cand, &ts_loc);
+                        if (!res.first) continue;
+                        double new_fit = res.second;
+                        if (better(new_fit, ts_loc)) { best_fit = new_fit; best_truck_sum = ts_loc; best_sol = std::move(cand); improved_any = true; }
+                        inserted = true;
                     }
-                    if (inserted) break;
                 }
                 if (inserted) continue;
 
@@ -2105,7 +2131,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                 if (ins_pos == -1) continue;
                 Solution trial2 = s;
                 trial2.drone_queue.insert(trial2.drone_queue.begin()+ins_pos, new_trip);
-                for (int pk : pkgs) add_loaded_mark(trial2, k, pk);
+                rebuild_loaded_from_drone_marks(p, trial2);
                 if (!trip_endurance_optimistic(p, trial2, trial2.drone_queue[ins_pos])) continue;
                 double ts2 = 0.0; auto res2 = fitness_full(p, trial2, &ts2);
                 if (!res2.first) continue;
@@ -2157,6 +2183,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                             trial.drone_queue[trip_idx].events.erase(trial.drone_queue[trip_idx].events.begin()+ev_idx);
                             if (trial.drone_queue[trip_idx].events.empty()) trial.drone_queue.erase(trial.drone_queue.begin()+trip_idx);
                         }
+                        rebuild_loaded_from_drone_marks(p, trial);
                         // Avoid relying on stale vector indices after potential erase of source event/trip.
                         // Validate the whole candidate before scoring.
                         std::string reason_local;
@@ -2183,9 +2210,11 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                         trial.drone_queue[trip_idx].events.erase(trial.drone_queue[trip_idx].events.begin()+ev_idx);
                         if (trial.drone_queue[trip_idx].events.empty()) trial.drone_queue.erase(trial.drone_queue.begin()+trip_idx);
                     }
+                    rebuild_loaded_from_drone_marks(p, trial);
                     int ins_pos = find_insert_pos_queue(p, trial, new_trip);
                     if (ins_pos != -1) {
                         trial.drone_queue.insert(trial.drone_queue.begin()+ins_pos, new_trip);
+                        rebuild_loaded_from_drone_marks(p, trial);
                         if (!trip_endurance_optimistic(p, trial, trial.drone_queue[ins_pos])) goto skip_new_trip; // quick check
                         // Source trip index may shift after erase; use full validation instead of index-based check.
                         {
@@ -2226,6 +2255,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                     else ++trp;
                 }
 
+                rebuild_loaded_from_drone_marks(p, trial);
                 double ts = 0.0; auto res = fitness_full(p, trial, &ts);
                 if (!res.first) continue;
                 double new_fit = res.second;
