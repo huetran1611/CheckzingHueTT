@@ -4376,8 +4376,13 @@ int main(int argc, char** argv){
 		    const int shake_log_every = std::max(1, env_int("LS_SHAKE_LOG_EVERY", 50));
 		    int shake_cnt = 0;
 		    std::mt19937 rng{std::random_device{}()};
+		    const int ls_max_applied = env_int("LS_MAX_APPLIED", -1);
+		    int ls_applied = 0;
+		    auto ls_cap_reached = [&]() -> bool { return (ls_max_applied >= 0) && (ls_applied >= ls_max_applied); };
+		    bool stop_ls = false;
 
 		    while (!solver_time_limit_reached()) {
+		        if (ls_cap_reached()) break;
 		        bool any_improved = false;
 		        for (int phase = 1; phase <= 2; ++phase) {
 		            g_ls_phase = phase;
@@ -4385,36 +4390,48 @@ int main(int argc, char** argv){
 		            bool improved_cycle = true;
 		            while (improved_cycle) {
 		                if (solver_time_limit_reached()) break;
+		                if (ls_cap_reached()) { stop_ls = true; break; }
 		                improved_cycle = false;
 		                if (relocate_sync_point_first_improve(p, sol)) {
 		                    double f = fitness_full(p, sol).second;
 		                    std::cout << "[LS] sync relocation applied, fitness: " << f << "\n";
 		                    improved_cycle = true;
+		                    ls_applied++;
 		                }
+		                if (ls_cap_reached()) { stop_ls = true; break; }
 		                if (merge_sync_singletons_relaxed_first_improve(p, sol)) {
 		                    double f = fitness_full(p, sol).second;
 		                    std::cout << "[LS] sync singleton merge applied, fitness: " << f << "\n";
 		                    improved_cycle = true;
+		                    ls_applied++;
 		                }
+		                if (ls_cap_reached()) { stop_ls = true; break; }
 		                if (insert_rendezvous_first_improve(p, sol)) {
 		                    double f = fitness_full(p, sol).second;
 		                    std::cout << "[LS] rendezvous insertion applied, fitness: " << f << "\n";
 		                    improved_cycle = true;
+		                    ls_applied++;
 		                }
+		                if (ls_cap_reached()) { stop_ls = true; break; }
 		                if (reorder_events_in_trip_first_improve(p, sol)) {
 		                    double f = fitness_full(p, sol).second;
 		                    std::cout << "[LS] intra-trip event reorder applied, fitness: " << f << "\n";
 		                    improved_cycle = true;
+		                    ls_applied++;
 		                }
+		                if (ls_cap_reached()) { stop_ls = true; break; }
 		                if (relocate_package_first_improve(p, sol)) {
 		                    double f = fitness_full(p, sol).second;
 		                    std::cout << "[LS] package relocation applied, fitness: " << f << "\n";
 		                    improved_cycle = true;
+		                    ls_applied++;
 		                }
+		                if (ls_cap_reached()) { stop_ls = true; break; }
 		                if (reorder_trip_first_improve(p, sol)) {
 		                    double f = fitness_full(p, sol).second;
 		                    std::cout << "[LS] trip reorder applied, fitness: " << f << "\n";
 		                    improved_cycle = true;
+		                    ls_applied++;
 		                }
 		                if (improved_cycle) {
 		                    any_improved = true;
@@ -4422,8 +4439,10 @@ int main(int argc, char** argv){
 		                    update_best_multi_solution_if_better(p, sol);
 		                }
 		            }
+		            if (stop_ls) break;
 		            if (solver_time_limit_reached()) break;
 		        }
+		        if (stop_ls) break;
 
 		        if (any_improved) continue;
 		        if (!shake_on_stag) break;
