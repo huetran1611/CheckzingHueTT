@@ -16,8 +16,6 @@
 #include <chrono>
 #include <cctype>
 #include <array>
-#include <deque>
-#include <cstdint>
 #include <unistd.h>
 #include "Solution.hpp"
 using namespace std;
@@ -68,63 +66,6 @@ static inline bool env_bool(const char *name, bool defv = false) {
         if (*v && (v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F')) return false;
     }
     return defv;
-}
-
-static inline std::uint64_t splitmix64(std::uint64_t x) {
-    x += 0x9e3779b97f4a7c15ULL;
-    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
-    return x ^ (x >> 31);
-}
-
-static inline void hash_combine_u64(std::uint64_t &seed, std::uint64_t v) {
-    seed ^= splitmix64(v + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
-}
-
-static std::uint64_t solution_signature(const Solution &s) {
-    std::uint64_t seed = 1469598103934665603ULL;
-    hash_combine_u64(seed, (std::uint64_t)s.trucks.size());
-    for (const auto &tr : s.trucks) {
-        hash_combine_u64(seed, (std::uint64_t)tr.truck_id);
-        hash_combine_u64(seed, (std::uint64_t)tr.stops.size());
-        for (const auto &st : tr.stops) {
-            hash_combine_u64(seed, (std::uint64_t)(st.customer + 1000003));
-            hash_combine_u64(seed, (std::uint64_t)st.loaded_from_drone.size());
-            for (auto pkg : st.loaded_from_drone) {
-                hash_combine_u64(seed, (std::uint64_t)(pkg + 1000033));
-            }
-        }
-    }
-    hash_combine_u64(seed, (std::uint64_t)s.drone_queue.size());
-    for (const auto &trip : s.drone_queue) {
-        hash_combine_u64(seed, (std::uint64_t)trip.events.size());
-        for (const auto &ev : trip.events) {
-            hash_combine_u64(seed, (std::uint64_t)(ev.rendezvous_customer + 1000211));
-            hash_combine_u64(seed, (std::uint64_t)(ev.truck_id + 1000249));
-            hash_combine_u64(seed, (std::uint64_t)ev.packages.size());
-            for (auto pkg : ev.packages) {
-                hash_combine_u64(seed, (std::uint64_t)(pkg + 1000289));
-            }
-        }
-    }
-    return seed;
-}
-
-static bool remember_solution_signature(
-    std::unordered_set<std::uint64_t> &seen,
-    std::deque<std::uint64_t> &order,
-    std::uint64_t sig,
-    std::size_t cap
-) {
-    auto ins = seen.insert(sig);
-    if (!ins.second) return false;
-    order.push_back(sig);
-    if (cap > 0 && seen.size() > cap) {
-        std::uint64_t old = order.front();
-        order.pop_front();
-        seen.erase(old);
-    }
-    return true;
 }
 
 struct ScopedTimer {
@@ -203,6 +144,7 @@ static int trip_load(const Params &p, const DroneTrip &trip);
 static int find_insert_pos_queue(const Params &p, const Solution &s, const DroneTrip &cand);
 static bool trip_endurance_optimistic(const Params &p, const Solution &s, const DroneTrip &trip);
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out = nullptr);
+static std::pair<bool,double> fitness_full_no_validate(const Params &p, const Solution &sol, double *truck_sum_out = nullptr);
 static double fitness(const Params &p, const Solution &sol, bool *valid_out);
 static bool relocate_sync_point_first_improve(const Params &p, Solution &s);
 static bool merge_sync_singletons_relaxed_first_improve(const Params &p, Solution &s);
@@ -1221,10 +1163,6 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
     bool stopped_by_time = false;
     bool stopped_by_iter_cap = false;
     std::mt19937 rng{std::random_device{}()};
-    const std::size_t ls_light_seen_cap = (std::size_t)std::max(0, env_int("LS_LIGHT_SEEN_CAP", 200000));
-    std::unordered_set<std::uint64_t> ls_light_seen;
-    std::deque<std::uint64_t> ls_light_seen_order;
-    int ls_light_skip_count = 0;
 
     int div_round = 0;
     log_entries.clear();
@@ -1268,18 +1206,8 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                 );
                 if (!move_res.moved) { no_imp_iter++; continue; }
 
-                // local search on truck result: use drone LS for refinement.
-                // Skip if this exact state has already been refined before.
-                if (remember_solution_signature(
-                        ls_light_seen,
-                        ls_light_seen_order,
-                        solution_signature(cur),
-                        ls_light_seen_cap
-                    )) {
-                    apply_drone_local_search(p, cur);
-                } else {
-                    ls_light_skip_count++;
-                }
+                // local search on truck result: use drone LS for refinement
+                apply_drone_local_search(p, cur);
                 if (first_iter_segment) {
                     merge_adjacent_trips(p, cur);
                     first_iter_segment = false;
@@ -1311,7 +1239,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                             std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << "\n";
                         } else {
                             double ts_best = 0.0;
-                            auto rb = fitness_full(p, best_multi_sol, &ts_best);
+                            auto rb = fitness_full_no_validate(p, best_multi_sol, &ts_best);
                             if (!rb.first) {
                                 best_multi_fit = res.second;
                                 best_multi_sol = cur;
@@ -1381,7 +1309,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                         std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << " (after diversification)\n";
                     } else {
                         double ts_best = 0.0;
-                        auto rb = fitness_full(p, best_multi_sol, &ts_best);
+                        auto rb = fitness_full_no_validate(p, best_multi_sol, &ts_best);
                         if (!rb.first) {
                             best_multi_fit = fres.second;
                             best_multi_sol = div_sol;
@@ -1436,7 +1364,6 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
         std::cout << "[ATS] iteration cap reached (ATS_MAX_ITERS=" << ats_max_iters
                   << "), returning best-so-far\n";
     }
-    std::cout << "[ATS] light-LS repeated-state skips: " << ls_light_skip_count << "\n";
 
     // Report best multi-visit solution found (if any), even if not global best
     if (best_multi_fit < std::numeric_limits<double>::infinity()) {
@@ -2356,16 +2283,34 @@ static double truck_arrival_at(const Solution &sol, const std::vector<TruckTimel
     return tls[truck_id].arrival[idx];
 }
 
+static inline double truck_arrival_at_fast(
+    const std::vector<TruckTimeline> &tls,
+    const std::vector<std::vector<int>> &pos_of,
+    int truck_id,
+    int customer
+) {
+    if (truck_id < 0 || truck_id >= (int)tls.size()) return std::numeric_limits<double>::infinity();
+    if (customer < 0 || customer >= (int)pos_of[truck_id].size()) return std::numeric_limits<double>::infinity();
+    int pos = pos_of[truck_id][customer];
+    if (pos < 0 || pos >= (int)tls[truck_id].arrival.size()) return std::numeric_limits<double>::infinity();
+    return tls[truck_id].arrival[(size_t)pos];
+}
+
 // Synchronized fitness: simulate trucks and drones together (queue order for drones).
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out) {
-    ScopedTimer _t(&g_prof.fitness_sec, g_prof.enabled);
-    if (g_prof.enabled) g_prof.fitness_calls++;
     // Always gate objective evaluation by full feasibility.
     std::string reason;
     if (!validate_solution(p, sol, reason)) {
         return {false, std::numeric_limits<double>::infinity()};
     }
+    return fitness_full_no_validate(p, sol, truck_sum_out);
+}
 
+// Synchronized fitness: simulate trucks and drones together (queue order for drones),
+// assuming the caller already ran validate_solution() successfully.
+static std::pair<bool,double> fitness_full_no_validate(const Params &p, const Solution &sol, double *truck_sum_out) {
+    ScopedTimer _t(&g_prof.fitness_sec, g_prof.enabled);
+    if (g_prof.enabled) g_prof.fitness_calls++;
     int K = p.n_truck;
     const int n = (int)p.customers.size();
     // mark packages resupplied by drones
@@ -2812,7 +2757,7 @@ static bool merge_sync_singletons_relaxed_first_improve(const Params &p, Solutio
                 std::string reason;
                 if (!validate_solution(p, trial, reason)) continue;
                 double ts = 0.0;
-                auto res = fitness_full(p, trial, &ts);
+                auto res = fitness_full_no_validate(p, trial, &ts);
                 if (!res.first) continue;
 
                 int mv = multi_visit_trip_count(trial);
@@ -2894,7 +2839,7 @@ static bool reorder_events_in_trip_first_improve(const Params &p, Solution &s) {
                 std::string reason;
                 if (!validate_solution(p, trial, reason)) continue;
                 double ts = 0.0;
-                auto fres = fitness_full(p, trial, &ts);
+                auto fres = fitness_full_no_validate(p, trial, &ts);
                 if (!fres.first) continue;
                 int mv = multi_visit_trip_count(trial);
                 double cand_max_wait = best_max_wait;
@@ -3122,6 +3067,15 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
     // precompute timelines once
     std::vector<TruckTimeline> timelines(s.trucks.size());
     for (size_t k = 0; k < s.trucks.size(); ++k) timelines[k] = compute_truck_timeline(p, s.trucks[k]);
+    const int K = (int)s.trucks.size();
+    const int n_all = (int)p.customers.size();
+    std::vector<std::vector<int>> pos_of(K, std::vector<int>(n_all, -1));
+    for (int k = 0; k < K; ++k) {
+        for (size_t pos = 0; pos < s.trucks[k].stops.size(); ++pos) {
+            int c = s.trucks[k].stops[pos].customer;
+            if (c >= 0 && c < n_all) pos_of[k][c] = (int)pos;
+        }
+    }
 
     double best_truck_sum = 0.0;
     auto base = fitness_full(p, s, &best_truck_sum);
@@ -3222,16 +3176,188 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
     for (const auto &c : cands) {
         int k = c.truck; int pkg = c.pkg; size_t pos_del = c.pos; int rel = c.rel;
 
-        // build a list of other non-resupplied, reachable packages on same truck with the SAME release time
-        std::vector<int> same_rel;
-        for (size_t pos2 = pos_del+1; pos2 + 1 < s.trucks[k].stops.size(); ++pos2) {
+        // Build a list of other non-resupplied, reachable packages on the SAME truck with the SAME release time.
+        // IMPORTANT: we scan the whole route (not only after pos_del). Otherwise, we may miss beneficial bundles
+        // like (pkg1, pkg2) where pkg2 appears before pkg1 in the truck route; bundling them can avoid an
+        // intermediate non-improving "create a new trip for pkg1 only" step.
+        struct RelCand { int pkg; int pos; };
+        std::vector<RelCand> same_rel_pos;
+        same_rel_pos.reserve(32);
+        for (size_t pos2 = 1; pos2 + 1 < s.trucks[k].stops.size(); ++pos2) {
             int pk2 = s.trucks[k].stops[pos2].customer;
+            if (pk2 == pkg) continue;
+            if (pk2 <= 0 || pk2 >= (int)p.customers.size()) continue;
             if (is_resupplied[pk2]) continue;
             if (p.customers[pk2].release != rel) continue;
             if (!p.reachable_mask.empty() && !p.reachable_mask[pk2]) continue;
             if (p.customers[pk2].demand > p.M_d + 1e-9) continue;
-            same_rel.push_back(pk2);
+            same_rel_pos.push_back(RelCand{pk2, (int)pos2});
         }
+        // Keep candidate set small (performance): prefer earlier positions first (tightens rendezvous constraint).
+        const int same_rel_max = env_int("LS_RELOC_SAME_REL_MAX", 16);
+        std::sort(same_rel_pos.begin(), same_rel_pos.end(), [](const RelCand &a, const RelCand &b){
+            if (a.pos != b.pos) return a.pos < b.pos;
+            return a.pkg < b.pkg;
+        });
+        if ((int)same_rel_pos.size() > same_rel_max) same_rel_pos.resize((size_t)same_rel_max);
+        std::vector<int> same_rel;
+        same_rel.reserve(same_rel_pos.size());
+        for (const auto &rc : same_rel_pos) same_rel.push_back(rc.pkg);
+
+        auto city_has_rendezvous_in = [&](const Solution &solx, int city) -> bool {
+            for (const auto &trip : solx.drone_queue)
+                for (const auto &ev : trip.events)
+                    if (ev.rendezvous_customer == city) return true;
+            return false;
+        };
+
+        auto try_assign_pkg_same_truck = [&](Solution &solx, int truck_id, int pk) -> bool {
+            // Try to resupply pk on its owner truck at some rendezvous <= delivery position.
+            // Prefer reusing an existing event; otherwise create a new singleton trip at an unused rendezvous city.
+            if (pk <= 0 || pk >= (int)p.customers.size()) return false;
+            if (truck_id < 0 || truck_id >= K) return false;
+            int pos_pk = (pk >= 0 && pk < n_all) ? pos_of[truck_id][pk] : -1;
+            if (pos_pk <= 0) return false;
+            if (!p.reachable_mask.empty() && !p.reachable_mask[pk]) return false; // if pk itself unreachable, any rendezvous at pk is impossible
+            if (p.customers[pk].demand > p.M_d + 1e-9) return false;
+            if (is_pkg_resupplied(solx, pk)) return true;
+
+            // Reuse existing event first (same truck, rendezvous position <= delivery position).
+            for (auto &trip : solx.drone_queue) {
+                for (auto &ev : trip.events) {
+                    if (ev.truck_id != truck_id) continue;
+                    int pos_rv = (ev.rendezvous_customer >= 0 && ev.rendezvous_customer < n_all) ? pos_of[truck_id][ev.rendezvous_customer] : -1;
+                    if (pos_rv < 0 || pos_rv > pos_pk) continue;
+                    if (std::find(ev.packages.begin(), ev.packages.end(), pk) != ev.packages.end()) return true;
+                    if (trip_load(p, trip) + p.customers[pk].demand > p.M_d + 1e-9) continue;
+                    ev.packages.push_back(pk);
+                    if (trip_endurance_optimistic(p, solx, trip)) return true;
+                    ev.packages.pop_back();
+                }
+            }
+
+            // Otherwise create a new singleton trip at the latest feasible rendezvous (closest to delivery),
+            // but only if the rendezvous city is not already used globally.
+            for (int pos = pos_pk; pos >= 1; --pos) {
+                int recv = solx.trucks[truck_id].stops[(size_t)pos].customer;
+                if (recv <= 0) continue;
+                if (!p.reachable_mask.empty() && !p.reachable_mask[recv]) continue;
+                if (city_has_rendezvous_in(solx, recv)) continue;
+                DroneTrip new_trip;
+                new_trip.events.push_back(ResupplyEvent{recv, truck_id, {pk}});
+                int ins_pos = find_insert_pos_queue(p, solx, new_trip);
+                if (ins_pos < 0) continue;
+                Solution trial = solx;
+                trial.drone_queue.insert(trial.drone_queue.begin() + ins_pos, new_trip);
+                rebuild_loaded_from_drone_marks(p, trial);
+                if (!trip_endurance_optimistic(p, trial, trial.drone_queue[(size_t)ins_pos])) continue;
+                std::string reason_local;
+                if (!validate_solution(p, trial, reason_local)) continue;
+                solx = std::move(trial);
+                return true;
+            }
+            return false;
+        };
+
+        auto try_cluster_resupply_then_repair = [&](const std::vector<int> &cluster_pkgs, const std::vector<int> &cluster_pos, size_t rv_pos_idx) -> bool {
+            if (cluster_pkgs.size() < 2) return false;
+            if (cluster_pos.empty()) return false;
+            size_t min_pos = (size_t)cluster_pos[0];
+            for (int pp : cluster_pos) if (pp >= 0 && (size_t)pp < min_pos) min_pos = (size_t)pp;
+            if (rv_pos_idx < 1 || rv_pos_idx > min_pos) return false;
+            int recv = s.trucks[k].stops[rv_pos_idx].customer;
+            if (recv <= 0) return false;
+            if (!p.reachable_mask.empty() && !p.reachable_mask[recv]) return false;
+
+            // Build a candidate where all cluster packages are resupplied at (truck=k, recv).
+            Solution cand = s;
+
+            // Try reusing existing event (same truck, same rendezvous) if it exists.
+            bool placed = false;
+            size_t placed_trip = 0, placed_ev = 0;
+            for (size_t tgi = 0; tgi < cand.drone_queue.size() && !placed; ++tgi) {
+                for (size_t egi = 0; egi < cand.drone_queue[tgi].events.size() && !placed; ++egi) {
+                    auto &ev0 = cand.drone_queue[tgi].events[egi];
+                    if (ev0.truck_id == k && ev0.rendezvous_customer == recv) {
+                        // merge unique pkgs
+                        std::vector<int> merged = ev0.packages;
+                        for (int pk : cluster_pkgs) {
+                            if (std::find(merged.begin(), merged.end(), pk) == merged.end()) merged.push_back(pk);
+                        }
+                        if (!release_span_ok(merged)) return false;
+                        ev0.packages.swap(merged);
+                        placed = true;
+                        placed_trip = tgi;
+                        placed_ev = egi;
+                    }
+                }
+            }
+
+            // If no such event exists, create a new trip only if rendezvous city is unused globally.
+            if (!placed) {
+                if (city_has_rendezvous_in(cand, recv)) return false;
+                DroneTrip new_trip;
+                new_trip.events.push_back(ResupplyEvent{recv, k, cluster_pkgs});
+                int ins_pos = find_insert_pos_queue(p, cand, new_trip);
+                if (ins_pos < 0) return false;
+                cand.drone_queue.insert(cand.drone_queue.begin() + ins_pos, new_trip);
+                placed = true;
+                placed_trip = (size_t)ins_pos;
+                placed_ev = 0;
+            }
+
+            // Repair capacity by removing some pkgs from this event and (optionally) reassigning them.
+            auto &evm = cand.drone_queue[placed_trip].events[placed_ev];
+            std::vector<int> removed;
+            const int max_removals = env_int("LS_RELOC_CLUSTER_MAX_REMOVALS", 64);
+            int rem_cnt = 0;
+            auto demand_of = [&](int pk) { return (pk > 0 && pk < (int)p.customers.size()) ? p.customers[pk].demand : 0; };
+            auto pos_of_pkg = [&](int pk) { return (pk >= 0 && pk < n_all) ? pos_of[k][pk] : -1; };
+
+            while (rem_cnt < max_removals) {
+                int load = 0;
+                for (int pk : evm.packages) load += demand_of(pk);
+                if (load <= p.M_d + 1e-9) break;
+                // remove a "bad" package: highest demand, tie -> farthest delivery position
+                int best_idx = -1;
+                for (size_t i = 0; i < evm.packages.size(); ++i) {
+                    int pk = evm.packages[i];
+                    if (best_idx < 0) { best_idx = (int)i; continue; }
+                    int cur = pk;
+                    int best = evm.packages[(size_t)best_idx];
+                    int dc = demand_of(cur), db = demand_of(best);
+                    if (dc > db) { best_idx = (int)i; continue; }
+                    if (dc == db) {
+                        int pc = pos_of_pkg(cur), pb = pos_of_pkg(best);
+                        if (pc > pb) { best_idx = (int)i; continue; }
+                    }
+                }
+                if (best_idx < 0) break;
+                removed.push_back(evm.packages[(size_t)best_idx]);
+                evm.packages.erase(evm.packages.begin() + best_idx);
+                rem_cnt++;
+            }
+
+            if (evm.packages.empty()) return false;
+
+            rebuild_loaded_from_drone_marks(p, cand);
+            if (!trip_endurance_optimistic(p, cand, cand.drone_queue[placed_trip])) return false;
+
+            // Try to reassign removed packages; if cannot, they remain truck-loaded (still feasible).
+            const int repair_try = env_int("LS_RELOC_CLUSTER_REPAIR_TRY", 1);
+            if (repair_try) {
+                for (int pk : removed) (void)try_assign_pkg_same_truck(cand, k, pk);
+            }
+
+            rebuild_loaded_from_drone_marks(p, cand);
+            std::string reason_local;
+            if (!validate_solution(p, cand, reason_local)) return false;
+            double ts_loc = 0.0;
+            auto res = fitness_full_no_validate(p, cand, &ts_loc);
+            if (!res.first) return false;
+            consider(std::move(cand), res.second, ts_loc);
+            return true;
+        };
 
         // try bundles: start with {pkg}, then progressively add same-release packages in route order until capacity full
         std::vector<int> bundle;
@@ -3324,7 +3450,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
 	                        for (size_t e = 0; e < tgt_trip.events.size(); ++e) {
 	                            int tk = tgt_trip.events[e].truck_id;
 	                            int ct = tgt_trip.events[e].rendezvous_customer;
-	                            double arr_e = truck_arrival_at(s, timelines, tk, ct);
+	                            double arr_e = truck_arrival_at_fast(timelines, pos_of, tk, ct);
 	                            if (arr_recv < arr_e) { insert_pos_by_arrival = e; break; }
 	                        }
 
@@ -3342,7 +3468,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
 	                            std::string reason_local;
 	                            if (!validate_solution(p, cand, reason_local)) continue;
 	                            double ts_loc = 0.0;
-	                            auto res = fitness_full(p, cand, &ts_loc);
+	                            auto res = fitness_full_no_validate(p, cand, &ts_loc);
 	                            if (!res.first) continue;
 	                            consider(std::move(cand), res.second, ts_loc);
 	                        }
@@ -3368,15 +3494,49 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
             return false;
         };
 
-        // try single and growing bundle
+	        // try single and growing bundle
+	        // New: try the whole cluster first (resupply many same-release packages at one point),
+	        // then repair by relocating/demoting some packages until feasible. This avoids needing to accept an
+	        // intermediate non-improving step (e.g., resupply only one package increases trip count without
+	        // improving makespan, but resupplying several together would improve).
+	        if (env_bool("LS_RELOC_CLUSTER_REPAIR", true)) {
+	            std::vector<int> cluster_pkgs;
+	            std::vector<int> cluster_pos;
+	            cluster_pkgs.reserve(1 + same_rel.size());
+	            cluster_pos.reserve(1 + same_rel.size());
+	            cluster_pkgs.push_back(pkg);
+	            cluster_pos.push_back((int)pos_del);
+	            for (int pk2 : same_rel) {
+	                int p2 = (k >= 0 && k < K && pk2 >= 0 && pk2 < n_all) ? pos_of[k][pk2] : -1;
+	                if (p2 >= 1) { cluster_pkgs.push_back(pk2); cluster_pos.push_back(p2); }
+	            }
+	            if (cluster_pkgs.size() >= 2) {
+	                size_t min_pos = (size_t)cluster_pos[0];
+	                for (int pp : cluster_pos) if (pp >= 0 && (size_t)pp < min_pos) min_pos = (size_t)pp;
+	                const int rv_cand_max = env_int("LS_RELOC_RV_CAND_MAX", 8);
+	                std::vector<size_t> rv_pos;
+	                rv_pos.reserve((size_t)rv_cand_max);
+	                for (int d = 0; d < rv_cand_max && (int)rv_pos.size() < rv_cand_max; ++d) {
+	                    if ((int)min_pos - d >= 1) rv_pos.push_back(min_pos - (size_t)d);
+	                }
+	                if (min_pos >= 2) rv_pos.push_back(1);
+	                if (min_pos >= 3) rv_pos.push_back(2);
+	                std::sort(rv_pos.begin(), rv_pos.end());
+	                rv_pos.erase(std::unique(rv_pos.begin(), rv_pos.end()), rv_pos.end());
+	                for (size_t lpos : rv_pos) {
+	                    (void)try_cluster_resupply_then_repair(cluster_pkgs, cluster_pos, lpos);
+	                }
+	            }
+	        }
+
         try_bundle(bundle, bundle_positions);
         for (int pk2 : same_rel) {
             bundle.push_back(pk2);
             // find position of pk2 on truck k
-            int pos2 = route_pos(s, k, pk2);
-            bundle_positions.push_back(pos2);
-            try_bundle(bundle, bundle_positions);
-        }
+            int pos2 = (k >= 0 && k < K && pk2 >= 0 && pk2 < n_all) ? pos_of[k][pk2] : -1;
+	            bundle_positions.push_back(pos2);
+	            try_bundle(bundle, bundle_positions);
+	        }
     }
 
     for (size_t trip_idx = 0; trip_idx < s.drone_queue.size(); ++trip_idx) {
@@ -3393,7 +3553,9 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                     if (trip2 == trip_idx && ev2_idx == ev_idx) continue;
                     const auto &ev2 = s.drone_queue[trip2].events[ev2_idx];
                     if (ev2.truck_id != truck_id) continue;
-                    int pr = route_pos(s, truck_id, ev2.rendezvous_customer);
+                    int pr = (truck_id >= 0 && truck_id < K && ev2.rendezvous_customer >= 0 && ev2.rendezvous_customer < n_all)
+                                 ? pos_of[truck_id][ev2.rendezvous_customer]
+                                 : -1;
                     if (pr < 0) continue;
                     rv_cands.push_back(RvCand{trip2, ev2_idx, pr, ev2.rendezvous_customer, (int)ev2.packages.size()});
                 }
@@ -3403,7 +3565,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
             for (size_t pkg_idx = 0; pkg_idx < ev.packages.size(); ++pkg_idx) {
                 PackageId pkg = ev.packages[pkg_idx];
                 // position of package delivery on this truck
-                int pos_del = route_pos(s, truck_id, pkg);
+                int pos_del = (truck_id >= 0 && truck_id < K && pkg >= 0 && pkg < n_all) ? pos_of[truck_id][pkg] : -1;
                 if (pos_del < 0) continue; // safety
 
                 // Try moving package to another rendezvous on same truck (before or at delivery)
@@ -3437,7 +3599,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                         rebuild_loaded_from_drone_marks(p, trial);
                         std::string reason_local;
                         if (!validate_solution(p, trial, reason_local)) { tried++; continue; }
-                        double ts = 0.0; auto res = fitness_full(p, trial, &ts);
+                        double ts = 0.0; auto res = fitness_full_no_validate(p, trial, &ts);
                         if (!res.first) { tried++; continue; }
                         consider(std::move(trial), res.second, ts);
                         tried++;
@@ -3461,60 +3623,94 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                             if (trial.drone_queue[trip_idx].events.empty()) trial.drone_queue.erase(trial.drone_queue.begin()+trip_idx);
                         }
                     }
-                    rebuild_loaded_from_drone_marks(p, trial);
+	                    rebuild_loaded_from_drone_marks(p, trial);
 
-                    // NEW: instead of creating a standalone trip, try inserting this rendezvous into an existing trip
-                    // that currently does NOT meet this truck (to respect "meet each truck at most once per trip").
-                    // Keep the target trip's index in the queue unchanged.
-                    for (size_t tgt_trip_idx = 0; tgt_trip_idx < trial.drone_queue.size(); ++tgt_trip_idx) {
-                        const auto &tgt_trip = trial.drone_queue[tgt_trip_idx];
+	                    // NEW: instead of creating a standalone trip, try inserting this rendezvous into an existing trip
+	                    // that currently does NOT meet this truck (to respect "meet each truck at most once per trip").
+	                    // Keep the target trip's index in the queue unchanged.
+	                    {
+	                        int pos_pkg_on_truck = (truck_id >= 0 && truck_id < K && pkg >= 0 && pkg < n_all) ? pos_of[truck_id][pkg] : -1;
+	                        if (pos_pkg_on_truck >= 0) {
+	                            const double arr_pkg = timelines[truck_id].arrival[(size_t)pos_pkg_on_truck];
 
-                        bool meets_truck = false;
-                        bool rv_used = false;
-                        for (const auto &evx : tgt_trip.events) {
-                            if (evx.truck_id == truck_id) { meets_truck = true; break; }
-                            if (evx.rendezvous_customer == pkg) { rv_used = true; break; }
-                        }
-                        if (meets_truck || rv_used) continue;
-                        if (trip_load(p, tgt_trip) + p.customers[pkg].demand > p.M_d + 1e-9) continue;
+	                            const int trip_shortlist = env_int("LS_RELOC_PKG_INSERT_TRIP_SHORTLIST", 30);
+	                            const int trip_eval_top  = env_int("LS_RELOC_PKG_INSERT_TRIP_EVAL_TOP", 12);
+	                            const double w_space = env_double("LS_RELOC_PKG_INSERT_W_SPACE", 1.0);
+	                            const double w_time  = env_double("LS_RELOC_PKG_INSERT_W_TIME", 0.02);
+	                            const double max_space = env_double("LS_RELOC_PKG_INSERT_MAX_SPACE", 0.0); // 0 => disabled
+	                            const double max_time  = env_double("LS_RELOC_PKG_INSERT_MAX_TIME", 0.0);  // 0 => disabled
 
-                        // Determine a reasonable insertion point in the event order using truck arrival time.
-                        // (This is a heuristic; separate operator can reorder events later.)
-                        int pos_pkg_on_truck = route_pos(trial, truck_id, pkg);
-                        if (pos_pkg_on_truck < 0) continue;
-                        double arr_pkg = timelines[truck_id].arrival[(size_t)pos_pkg_on_truck];
-                        size_t insert_pos_by_arrival = tgt_trip.events.size();
-                        for (size_t e = 0; e < tgt_trip.events.size(); ++e) {
-                            int tk = tgt_trip.events[e].truck_id;
-                            int ct = tgt_trip.events[e].rendezvous_customer;
-                            double arr_e = truck_arrival_at(trial, timelines, tk, ct);
-                            if (arr_pkg < arr_e) { insert_pos_by_arrival = e; break; }
-                        }
+	                            struct TripCand { size_t idx; double score; };
+	                            std::vector<TripCand> tc;
+	                            tc.reserve(trial.drone_queue.size());
 
-                        std::array<size_t,2> ins = {insert_pos_by_arrival, tgt_trip.events.size()};
-                        for (size_t ins_idx = 0; ins_idx < ins.size(); ++ins_idx) {
-                            size_t ins_pos = ins[ins_idx];
-                            if (ins_idx == 1 && ins[1] == ins[0]) continue;
+	                            for (size_t tgt_trip_idx = 0; tgt_trip_idx < trial.drone_queue.size(); ++tgt_trip_idx) {
+	                                const auto &tgt_trip = trial.drone_queue[tgt_trip_idx];
+	                                if (tgt_trip.events.empty()) continue;
 
-                            Solution trial_ins = trial;
-                            auto &trip_mut = trial_ins.drone_queue[tgt_trip_idx];
-                            ResupplyEvent ev_new{pkg, truck_id, {pkg}};
-                            if (ins_pos > trip_mut.events.size()) ins_pos = trip_mut.events.size();
-                            trip_mut.events.insert(trip_mut.events.begin() + ins_pos, std::move(ev_new));
+	                                bool meets_truck = false;
+	                                bool rv_used = false;
+	                                for (const auto &evx : tgt_trip.events) {
+	                                    if (evx.truck_id == truck_id) { meets_truck = true; break; }
+	                                    if (evx.rendezvous_customer == pkg) { rv_used = true; break; }
+	                                }
+	                                if (meets_truck || rv_used) continue;
+	                                if (trip_load(p, tgt_trip) + p.customers[pkg].demand > p.M_d + 1e-9) continue;
 
-                            // Quick endurance pruning on the modified target trip.
-                            rebuild_loaded_from_drone_marks(p, trial_ins);
-                            if (!trip_endurance_optimistic(p, trial_ins, trip_mut)) continue;
+	                                double best_space = std::numeric_limits<double>::infinity();
+	                                double best_time = std::numeric_limits<double>::infinity();
+	                                for (const auto &evx : tgt_trip.events) {
+	                                    best_space = std::min(best_space, p.drone_time[pkg][evx.rendezvous_customer]);
+	                                    double arr_e = truck_arrival_at_fast(timelines, pos_of, evx.truck_id, evx.rendezvous_customer);
+	                                    if (std::isfinite(arr_e)) best_time = std::min(best_time, std::fabs(arr_pkg - arr_e));
+	                                }
+	                                if (max_space > 0.0 && best_space > max_space) continue;
+	                                if (max_time > 0.0 && std::isfinite(best_time) && best_time > max_time) continue;
 
-                            std::string reason_local;
-                            if (!validate_solution(p, trial_ins, reason_local)) continue;
-                            double ts = 0.0;
-                            auto res = fitness_full(p, trial_ins, &ts);
-                            if (!res.first) continue;
-                            double new_fit = res.second;
-                            consider(std::move(trial_ins), new_fit, ts);
-                        }
-                    }
+	                                double score = w_space * best_space + w_time * (std::isfinite(best_time) ? best_time : 0.0);
+	                                tc.push_back(TripCand{tgt_trip_idx, score});
+	                            }
+
+	                            std::sort(tc.begin(), tc.end(), [](const TripCand &a, const TripCand &b){ return a.score < b.score; });
+	                            if ((int)tc.size() > trip_shortlist) tc.resize((size_t)trip_shortlist);
+
+	                            int eval_cnt = std::min((int)tc.size(), trip_eval_top);
+	                            for (int ii = 0; ii < eval_cnt; ++ii) {
+	                                size_t tgt_trip_idx = tc[(size_t)ii].idx;
+	                                const auto &tgt_trip = trial.drone_queue[tgt_trip_idx];
+
+	                                // insertion position in event sequence based on truck arrival time at rendezvous
+	                                size_t insert_pos_by_arrival = tgt_trip.events.size();
+	                                for (size_t e = 0; e < tgt_trip.events.size(); ++e) {
+	                                    double arr_e = truck_arrival_at_fast(timelines, pos_of, tgt_trip.events[e].truck_id, tgt_trip.events[e].rendezvous_customer);
+	                                    if (arr_pkg < arr_e) { insert_pos_by_arrival = e; break; }
+	                                }
+
+	                                std::array<size_t,2> ins = {insert_pos_by_arrival, tgt_trip.events.size()};
+	                                for (size_t ins_idx = 0; ins_idx < ins.size(); ++ins_idx) {
+	                                    size_t ins_pos = ins[ins_idx];
+	                                    if (ins_idx == 1 && ins[1] == ins[0]) continue;
+
+	                                    Solution trial_ins = trial;
+	                                    auto &trip_mut = trial_ins.drone_queue[tgt_trip_idx];
+	                                    ResupplyEvent ev_new{pkg, truck_id, {pkg}};
+	                                    if (ins_pos > trip_mut.events.size()) ins_pos = trip_mut.events.size();
+	                                    trip_mut.events.insert(trip_mut.events.begin() + ins_pos, std::move(ev_new));
+
+	                                    // Quick endurance pruning on the modified target trip.
+	                                    rebuild_loaded_from_drone_marks(p, trial_ins);
+	                                    if (!trip_endurance_optimistic(p, trial_ins, trip_mut)) continue;
+
+	                                    std::string reason_local;
+	                                    if (!validate_solution(p, trial_ins, reason_local)) continue;
+	                                    double ts = 0.0;
+	                                    auto res = fitness_full_no_validate(p, trial_ins, &ts);
+	                                    if (!res.first) continue;
+	                                    consider(std::move(trial_ins), res.second, ts);
+	                                }
+	                            }
+	                        }
+	                    }
 
                     int ins_pos = find_insert_pos_queue(p, trial, new_trip);
                     if (ins_pos != -1) {
@@ -3526,7 +3722,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                             std::string reason_local;
                             if (!validate_solution(p, trial, reason_local)) goto skip_new_trip;
                         }
-                        double ts = 0.0; auto res = fitness_full(p, trial, &ts);
+                        double ts = 0.0; auto res = fitness_full_no_validate(p, trial, &ts);
                         if (!res.first) goto skip_new_trip;
                         double new_fit = res.second;
                         consider(std::move(trial), new_fit, ts);
@@ -4041,7 +4237,7 @@ int main(int argc, char** argv){
             return 2;
         }
         double ts = 0.0;
-        auto res = fitness_full(p, sol, &ts);
+        auto res = fitness_full_no_validate(p, sol, &ts);
         if (!res.first) {
             std::cout << "[VALIDATE] FAIL: fitness_full invalid\n";
             return 2;
@@ -4178,33 +4374,10 @@ int main(int argc, char** argv){
 		    // Default very large so "run for 10 minutes" won't stop early unless user caps it.
 		    const int max_shakes = env_int("LS_MAX_SHAKES", 1000000);
 		    const int shake_log_every = std::max(1, env_int("LS_SHAKE_LOG_EVERY", 50));
-		    const std::size_t ls_strong_seen_cap = (std::size_t)std::max(0, env_int("LS_STRONG_SEEN_CAP", 200000));
-		    std::unordered_set<std::uint64_t> ls_strong_seen;
-		    std::deque<std::uint64_t> ls_strong_seen_order;
-		    int ls_strong_skip_count = 0;
 		    int shake_cnt = 0;
 		    std::mt19937 rng{std::random_device{}()};
 
 		    while (!solver_time_limit_reached()) {
-		        if (!remember_solution_signature(
-		                ls_strong_seen,
-		                ls_strong_seen_order,
-		                solution_signature(sol),
-		                ls_strong_seen_cap
-		            )) {
-		            ls_strong_skip_count++;
-		            if (!shake_on_stag) break;
-		            if (shake_cnt >= max_shakes) break;
-		            Solution shaken;
-		            if (!drone_shake_feasible(p, sol, shaken, rng)) break;
-		            sol = std::move(shaken);
-		            shake_cnt++;
-		            if ((shake_cnt % shake_log_every) == 0 || shake_cnt == 1) {
-		                std::cout << "[LS] stagnation shake applied (" << shake_cnt << "/" << max_shakes << ")\n";
-		            }
-		            continue;
-		        }
-
 		        bool any_improved = false;
 		        for (int phase = 1; phase <= 2; ++phase) {
 		            g_ls_phase = phase;
@@ -4268,7 +4441,6 @@ int main(int argc, char** argv){
 
 		    // Restore best-seen (important when shakes are enabled).
 		    sol = std::move(best_seen);
-		    std::cout << "[LS] repeated-state skips: " << ls_strong_skip_count << "\n";
 
     std::cout << "--- After drone local search init ---\n";
     print_truck_routes(sol);
