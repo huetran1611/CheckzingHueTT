@@ -143,8 +143,18 @@ static bool trip_endurance_ok(const Params &p, const Solution &s, const std::vec
 static int trip_load(const Params &p, const DroneTrip &trip);
 static int find_insert_pos_queue(const Params &p, const Solution &s, const DroneTrip &cand);
 static bool trip_endurance_optimistic(const Params &p, const Solution &s, const DroneTrip &trip);
-static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out = nullptr);
-static std::pair<bool,double> fitness_full_no_validate(const Params &p, const Solution &sol, double *truck_sum_out = nullptr);
+static std::pair<bool,double> fitness_full(
+    const Params &p,
+    const Solution &sol,
+    double *truck_sum_out = nullptr,
+    double *truck_imbalance_out = nullptr
+);
+static std::pair<bool,double> fitness_full_no_validate(
+    const Params &p,
+    const Solution &sol,
+    double *truck_sum_out = nullptr,
+    double *truck_imbalance_out = nullptr
+);
 static double fitness(const Params &p, const Solution &sol, bool *valid_out);
 static bool relocate_sync_point_first_improve(const Params &p, Solution &s);
 static bool merge_sync_singletons_relaxed_first_improve(const Params &p, Solution &s);
@@ -649,13 +659,13 @@ static inline bool better_lex(
     int cand_multi,
     double cand_max_drone_wait,
     double cand_total_drone_wait,
-    double cand_truck_sum,
+    double cand_truck_imbalance,
     double cur_makespan,
     int cur_drone_trips,
     int cur_multi,
     double cur_max_drone_wait,
     double cur_total_drone_wait,
-    double cur_truck_sum
+    double cur_truck_imbalance
 ) {
     const double eps = 1e-9;
     if (g_ls_phase == 1) {
@@ -673,53 +683,76 @@ static inline bool better_lex(
     }
     if (cand_makespan + eps < cur_makespan) return true;
     if (std::fabs(cand_makespan - cur_makespan) > eps) return false;
-    // Same makespan: only accept a different (multi, trip_cnt) if it is strictly better in efficiency:
-    // - does not reduce multi-visit trip count
-    // - does not increase drone trip count
-    // and improves at least one of them.
-    if (cand_multi != cur_multi || cand_drone_trips != cur_drone_trips) {
-        bool nonworse = (cand_multi >= cur_multi) && (cand_drone_trips <= cur_drone_trips);
-        bool strict = (cand_multi > cur_multi) || (cand_drone_trips < cur_drone_trips);
-        if (nonworse && strict) return true;
-        return false;
-    }
+
+    // Requested tie-break order when makespan is equal:
+    // 1) smaller truck completion-time imbalance
+    // 2) prefer having multi-visit (binary)
+    // 3) smaller number of drone trips
+    // 4) larger multi-visit trip count
+    if (cand_truck_imbalance + eps < cur_truck_imbalance) return true;
+    if (std::fabs(cand_truck_imbalance - cur_truck_imbalance) > eps) return false;
+
+    const int cand_has_mv = (cand_multi > 0) ? 1 : 0;
+    const int cur_has_mv = (cur_multi > 0) ? 1 : 0;
+    if (cand_has_mv != cur_has_mv) return cand_has_mv > cur_has_mv;
+
+    if (cand_drone_trips + 0 < cur_drone_trips) return true;
+    if (cand_drone_trips > cur_drone_trips) return false;
+
+    if (cand_multi > cur_multi) return true;
+    if (cand_multi < cur_multi) return false;
+
+    // Secondary stable tie-breakers.
     if (cand_max_drone_wait + eps < cur_max_drone_wait) return true;
     if (std::fabs(cand_max_drone_wait - cur_max_drone_wait) > eps) return false;
     if (cand_total_drone_wait + eps < cur_total_drone_wait) return true;
     if (std::fabs(cand_total_drone_wait - cur_total_drone_wait) > eps) return false;
-    return cand_truck_sum + eps < cur_truck_sum;
+    return false;
 }
 
 // Compare "best seen" solutions consistently (independent of phase).
-// Primary: makespan. If equal: prefer >= multi-visit and <= trip count (strictly better in at least one),
-// then max wait, then total wait, then truck-sum as last tie-break.
+// Primary: makespan. If equal:
+// 1) smaller truck completion-time imbalance
+// 2) prefer having multi-visit
+// 3) smaller drone trip count
+// 4) larger multi-visit trip count
+// then waiting metrics as secondary tie-breakers.
 static inline bool better_overall(
     double cand_makespan,
     int cand_drone_trips,
     int cand_multi,
     double cand_max_drone_wait,
     double cand_total_drone_wait,
-    double cand_truck_sum,
+    double cand_truck_imbalance,
     double cur_makespan,
     int cur_drone_trips,
     int cur_multi,
     double cur_max_drone_wait,
     double cur_total_drone_wait,
-    double cur_truck_sum
+    double cur_truck_imbalance
 ) {
     const double eps = 1e-9;
     if (cand_makespan + eps < cur_makespan) return true;
     if (std::fabs(cand_makespan - cur_makespan) > eps) return false;
-    if (cand_multi != cur_multi || cand_drone_trips != cur_drone_trips) {
-        bool nonworse = (cand_multi >= cur_multi) && (cand_drone_trips <= cur_drone_trips);
-        bool strict = (cand_multi > cur_multi) || (cand_drone_trips < cur_drone_trips);
-        return nonworse && strict;
-    }
+
+    if (cand_truck_imbalance + eps < cur_truck_imbalance) return true;
+    if (std::fabs(cand_truck_imbalance - cur_truck_imbalance) > eps) return false;
+
+    const int cand_has_mv = (cand_multi > 0) ? 1 : 0;
+    const int cur_has_mv = (cur_multi > 0) ? 1 : 0;
+    if (cand_has_mv != cur_has_mv) return cand_has_mv > cur_has_mv;
+
+    if (cand_drone_trips < cur_drone_trips) return true;
+    if (cand_drone_trips > cur_drone_trips) return false;
+
+    if (cand_multi > cur_multi) return true;
+    if (cand_multi < cur_multi) return false;
+
     if (cand_max_drone_wait + eps < cur_max_drone_wait) return true;
     if (std::fabs(cand_max_drone_wait - cur_max_drone_wait) > eps) return false;
     if (cand_total_drone_wait + eps < cur_total_drone_wait) return true;
     if (std::fabs(cand_total_drone_wait - cur_total_drone_wait) > eps) return false;
-    return cand_truck_sum + eps < cur_truck_sum;
+    return false;
 }
 
 static void rebuild_loaded_from_drone_marks(const Params &p, Solution &s) {
@@ -907,7 +940,7 @@ static bool insert_rendezvous_first_improve(const Params &p, Solution &s) {
     if (s.drone_queue.empty()) return false;
 
     double base_sum = 0.0;
-    auto base = fitness_full(p, s, &base_sum);
+    auto base = fitness_full(p, s, nullptr, &base_sum);
     if (!base.first) return false;
     const double base_fit = base.second;
     const int base_multi = multi_visit_trip_count(s);
@@ -1045,8 +1078,8 @@ static bool insert_rendezvous_first_improve(const Params &p, Solution &s) {
             for (auto &st : stops_mut) if (st.customer == city) { st.loaded_from_drone.push_back(city); break; }
 
             if (!trip_endurance_optimistic(p, trial, trip_new)) continue;
-            double ts = 0.0;
-            auto res = fitness_full(p, trial, &ts);
+            double ts = 0.0, tb = 0.0;
+            auto res = fitness_full(p, trial, &ts, &tb);
             if (!res.first) continue;
 
             int mv = multi_visit_trip_count(trial);
@@ -1063,7 +1096,7 @@ static bool insert_rendezvous_first_improve(const Params &p, Solution &s) {
             }
 
             int cand_trip_cnt = (int)trial.drone_queue.size();
-            if (better_lex(res.second, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, ts,
+            if (better_lex(res.second, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, tb,
                            base_fit, base_trip_cnt, base_multi, base_max_wait, base_total_wait, base_sum)) {
                 s = std::move(trial);
                 return true;
@@ -1082,10 +1115,10 @@ static void update_best_multi_solution_if_better(const Params &p, const Solution
         g_best_multi_solution = cand;
         return;
     }
-    double ts_best = 0.0;
-    auto rb = fitness_full(p, g_best_multi_solution, &ts_best);
-    double ts_cur = 0.0;
-    auto rc = fitness_full(p, cand, &ts_cur);
+    double ts_best = 0.0, tb_best = 0.0;
+    auto rb = fitness_full(p, g_best_multi_solution, &ts_best, &tb_best);
+    double ts_cur = 0.0, tb_cur = 0.0;
+    auto rc = fitness_full(p, cand, &ts_cur, &tb_cur);
     if (!rc.first) return;
     if (!rb.first) {
         g_best_multi_solution = cand;
@@ -1099,8 +1132,8 @@ static void update_best_multi_solution_if_better(const Params &p, const Solution
     int trip_cur = (int)cand.drone_queue.size();
     auto w_cur = drone_wait_metrics(p, cand);
 
-    if (better_overall(rc.second, trip_cur, mv_cur, w_cur.first, w_cur.second, ts_cur,
-                       rb.second, trip_best, mv_best, w_best.first, w_best.second, ts_best)) {
+    if (better_overall(rc.second, trip_cur, mv_cur, w_cur.first, w_cur.second, tb_cur,
+                       rb.second, trip_best, mv_best, w_best.first, w_best.second, tb_best)) {
         g_best_multi_solution = cand;
     }
 }
@@ -1153,7 +1186,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
     struct LogEntry {int seg; int iter; int div; int nid; double fit_cur; double fit_best_global; double fit_best_segment; bool improved; bool multi_visit; double best_multi_fit;};
     std::vector<LogEntry> log_entries;
 
-    double best_sum = 0.0; auto base = fitness_full(p, s, &best_sum); if (!base.first) return;
+    double best_sum = 0.0; auto base = fitness_full(p, s, nullptr, &best_sum); if (!base.first) return;
     double best_fit = base.second; Solution best_sol = s;
     double best_multi_fit = has_multi_visit(s) ? best_fit : std::numeric_limits<double>::infinity();
     Solution best_multi_sol = has_multi_visit(s) ? s : Solution{};
@@ -1213,7 +1246,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                     first_iter_segment = false;
                 }
 
-                double ts = 0.0; auto res = fitness_full(p, cur, &ts);
+                double ts = 0.0, tb = 0.0; auto res = fitness_full(p, cur, &ts, &tb);
                 if (!res.first) { no_imp_iter++; continue; }
                 use_cnt[nid]++;
                 for (int c : move_res.touched) {
@@ -1225,8 +1258,8 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                 double current_fit = fitness_full(p, s, nullptr).second;
                 bool improved_global = false;
                 if (res.second + 1e-9 < best_fit) {
-                    score[nid] += gamma1; best_fit = res.second; best_sum = ts; best_sol = cur; s = cur; no_imp_iter = 0; seg_no_improve = 0; improved_global = true; segment_improved_global = true;
-                } else if (res.second + 1e-9 < current_fit || (std::fabs(res.second - current_fit) < 1e-9 && ts + 1e-9 < best_sum)) {
+                    score[nid] += gamma1; best_fit = res.second; best_sum = tb; best_sol = cur; s = cur; no_imp_iter = 0; seg_no_improve = 0; improved_global = true; segment_improved_global = true;
+                } else if (res.second + 1e-9 < current_fit || (std::fabs(res.second - current_fit) < 1e-9 && tb + 1e-9 < best_sum)) {
                     score[nid] += gamma2; s = cur; no_imp_iter = 0;
                 } else { score[nid] += gamma3; no_imp_iter++; }
 
@@ -1238,8 +1271,8 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                             best_multi_sol = cur;
                             std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << "\n";
                         } else {
-                            double ts_best = 0.0;
-                            auto rb = fitness_full_no_validate(p, best_multi_sol, &ts_best);
+                            double ts_best = 0.0, tb_best = 0.0;
+                            auto rb = fitness_full_no_validate(p, best_multi_sol, &ts_best, &tb_best);
                             if (!rb.first) {
                                 best_multi_fit = res.second;
                                 best_multi_sol = cur;
@@ -1254,8 +1287,8 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                                 int trip_cur = (int)cur.drone_queue.size();
                                 auto w_cur = drone_wait_metrics(p, cur);
 
-                                if (better_lex(res.second, trip_cur, mv_cur, w_cur.first, w_cur.second, ts,
-                                               f_best, trip_best, mv_best, w_best.first, w_best.second, ts_best)) {
+                                if (better_lex(res.second, trip_cur, mv_cur, w_cur.first, w_cur.second, tb,
+                                               f_best, trip_best, mv_best, w_best.first, w_best.second, tb_best)) {
                                     best_multi_fit = res.second;
                                     best_multi_sol = cur;
                                     std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << "\n";
@@ -1282,6 +1315,40 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
             if (stopped_by_time) break;
 
             // segment ends
+            // Run additional LS at segment end until no further improvement.
+            while (!solver_time_limit_reached()) {
+                double cur_ts = 0.0, cur_tb = 0.0;
+                auto cur_fr = fitness_full(p, s, &cur_ts, &cur_tb);
+                if (!cur_fr.first) break;
+                int cur_trip = (int)s.drone_queue.size();
+                int cur_mv = multi_visit_trip_count(s);
+                auto cur_w = drone_wait_metrics(p, s);
+
+                Solution cand = s;
+                apply_drone_local_search(p, cand);
+
+                double cand_ts = 0.0, cand_tb = 0.0;
+                auto cand_fr = fitness_full(p, cand, &cand_ts, &cand_tb);
+                if (!cand_fr.first) break;
+                int cand_trip = (int)cand.drone_queue.size();
+                int cand_mv = multi_visit_trip_count(cand);
+                auto cand_w = drone_wait_metrics(p, cand);
+
+                if (!better_overall(
+                        cand_fr.second, cand_trip, cand_mv, cand_w.first, cand_w.second, cand_tb,
+                        cur_fr.second,  cur_trip,  cur_mv,  cur_w.first,  cur_w.second,  cur_tb)) {
+                    break;
+                }
+
+                s = std::move(cand);
+                if (cand_fr.second + 1e-9 < best_fit) {
+                    best_fit = cand_fr.second;
+                    best_sum = cand_tb;
+                    best_sol = s;
+                    segment_improved_global = true;
+                }
+            }
+
             // Carry current solution to the next segment (same behavior as test_similarity).
             // Tabu structures are reset per segment, so no forced rollback to best here.
             if (!segment_improved_global) seg_no_improve++;
@@ -1297,7 +1364,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
 
         // diversification phase
         Solution div_sol = diversify_solution(p, best_sol, rng);
-        double div_sum = 0.0; auto fres = fitness_full(p, div_sol, &div_sum);
+        double div_sum = 0.0; auto fres = fitness_full(p, div_sol, nullptr, &div_sum);
         if (fres.first && (fres.second + 1e-9 < best_fit)) {
             best_fit = fres.second; best_sum = div_sum; best_sol = div_sol; s = div_sol; div_no_improve = 0;
             if (has_multi_visit(div_sol)) {
@@ -1308,8 +1375,8 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                         best_multi_sol = div_sol;
                         std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << " (after diversification)\n";
                     } else {
-                        double ts_best = 0.0;
-                        auto rb = fitness_full_no_validate(p, best_multi_sol, &ts_best);
+                        double ts_best = 0.0, tb_best = 0.0;
+                        auto rb = fitness_full_no_validate(p, best_multi_sol, &ts_best, &tb_best);
                         if (!rb.first) {
                             best_multi_fit = fres.second;
                             best_multi_sol = div_sol;
@@ -1325,7 +1392,7 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
                             auto w_cur = drone_wait_metrics(p, div_sol);
 
                             if (better_lex(fres.second, trip_cur, mv_cur, w_cur.first, w_cur.second, div_sum,
-                                           f_best, trip_best, mv_best, w_best.first, w_best.second, ts_best)) {
+                                           f_best, trip_best, mv_best, w_best.first, w_best.second, tb_best)) {
                                 best_multi_fit = fres.second;
                                 best_multi_sol = div_sol;
                                 std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << " (after diversification)\n";
@@ -2297,18 +2364,23 @@ static inline double truck_arrival_at_fast(
 }
 
 // Synchronized fitness: simulate trucks and drones together (queue order for drones).
-static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out) {
+static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out, double *truck_imbalance_out) {
     // Always gate objective evaluation by full feasibility.
     std::string reason;
     if (!validate_solution(p, sol, reason)) {
         return {false, std::numeric_limits<double>::infinity()};
     }
-    return fitness_full_no_validate(p, sol, truck_sum_out);
+    return fitness_full_no_validate(p, sol, truck_sum_out, truck_imbalance_out);
 }
 
 // Synchronized fitness: simulate trucks and drones together (queue order for drones),
 // assuming the caller already ran validate_solution() successfully.
-static std::pair<bool,double> fitness_full_no_validate(const Params &p, const Solution &sol, double *truck_sum_out) {
+static std::pair<bool,double> fitness_full_no_validate(
+    const Params &p,
+    const Solution &sol,
+    double *truck_sum_out,
+    double *truck_imbalance_out
+) {
     ScopedTimer _t(&g_prof.fitness_sec, g_prof.enabled);
     if (g_prof.enabled) g_prof.fitness_calls++;
     int K = p.n_truck;
@@ -2418,6 +2490,12 @@ static std::pair<bool,double> fitness_full_no_validate(const Params &p, const So
     }
     double max_truck_finish = 0.0; double sum_truck = 0.0;
     for (double tt : t_truck) { max_truck_finish = std::max(max_truck_finish, tt); sum_truck += tt; }
+    if (truck_imbalance_out) {
+        const double mean_truck = (K > 0) ? (sum_truck / (double)K) : 0.0;
+        double imbalance = 0.0;
+        for (double tt : t_truck) imbalance += std::fabs(tt - mean_truck);
+        *truck_imbalance_out = imbalance;
+    }
     if (truck_sum_out) *truck_sum_out = sum_truck;
     return {true, std::max(max_truck_finish, max_drone_finish)};
 }
@@ -2632,7 +2710,7 @@ static bool merge_sync_singletons_relaxed_first_improve(const Params &p, Solutio
     ScopedTimer _t(&g_prof.op_merge_single_sec, g_prof.enabled);
 	    if (s.drone_queue.size() < 2) return false;
 	    double base_truck_sum = 0.0;
-	    auto base = fitness_full(p, s, &base_truck_sum);
+	    auto base = fitness_full(p, s, nullptr, &base_truck_sum);
 	    if (!base.first) return false;
 	    const double base_fit = base.second;
 	    const int base_multi = multi_visit_trip_count(s);
@@ -2756,8 +2834,8 @@ static bool merge_sync_singletons_relaxed_first_improve(const Params &p, Solutio
                 rebuild_loaded_from_drone_marks(p, trial);
                 std::string reason;
                 if (!validate_solution(p, trial, reason)) continue;
-                double ts = 0.0;
-                auto res = fitness_full_no_validate(p, trial, &ts);
+                double ts = 0.0, tb = 0.0;
+                auto res = fitness_full_no_validate(p, trial, &ts, &tb);
                 if (!res.first) continue;
 
                 int mv = multi_visit_trip_count(trial);
@@ -2795,7 +2873,7 @@ static bool merge_sync_singletons_relaxed_first_improve(const Params &p, Solutio
                         }
                     }
                 } else {
-                    accept = better_lex(res.second, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, ts,
+                    accept = better_lex(res.second, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, tb,
                                         base_fit, base_trip_cnt, base_multi, base_max_wait, base_total_wait, base_truck_sum);
                 }
                 if (accept) {
@@ -2815,7 +2893,7 @@ static bool reorder_events_in_trip_first_improve(const Params &p, Solution &s) {
     ScopedTimer _t(&g_prof.op_reorder_events_sec, g_prof.enabled);
     if (s.drone_queue.empty()) return false;
     double best_sum = 0.0;
-    auto base = fitness_full(p, s, &best_sum);
+    auto base = fitness_full(p, s, nullptr, &best_sum);
 	    if (!base.first) return false;
 	    double best_fit = base.second;
 	    int best_multi = multi_visit_trip_count(s);
@@ -2839,7 +2917,8 @@ static bool reorder_events_in_trip_first_improve(const Params &p, Solution &s) {
                 std::string reason;
                 if (!validate_solution(p, trial, reason)) continue;
                 double ts = 0.0;
-                auto fres = fitness_full_no_validate(p, trial, &ts);
+                double tb = 0.0;
+                auto fres = fitness_full_no_validate(p, trial, &ts, &tb);
                 if (!fres.first) continue;
                 int mv = multi_visit_trip_count(trial);
                 double cand_max_wait = best_max_wait;
@@ -2856,14 +2935,14 @@ static bool reorder_events_in_trip_first_improve(const Params &p, Solution &s) {
                     cand_total_wait = w.second;
                 }
 	                int cand_trip_cnt = (int)trial.drone_queue.size();
-	                if (better_lex(fres.second, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, ts,
+	                if (better_lex(fres.second, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, tb,
 	                               best_fit, best_trip_cnt, best_multi, best_max_wait, best_total_wait, best_sum)) {
 	                    best_fit = fres.second;
 	                    best_trip_cnt = cand_trip_cnt;
 	                    best_multi = mv;
 	                    best_max_wait = cand_max_wait;
 	                    best_total_wait = cand_total_wait;
-	                    best_sum = ts;
+	                    best_sum = tb;
 	                    best_sol = std::move(trial);
 	                    improved_any = true;
 	                }
@@ -2937,7 +3016,7 @@ static bool relocate_sync_point_first_improve(const Params &p, Solution &s) {
     };
 
     double best_truck_sum = 0.0;
-    auto base = fitness_full(p, s, &best_truck_sum);
+    auto base = fitness_full(p, s, nullptr, &best_truck_sum);
 	    if (!base.first) return false;
 	    double best_fit = base.second;
 	    int best_multi = multi_visit_trip_count(s);
@@ -3019,7 +3098,7 @@ static bool relocate_sync_point_first_improve(const Params &p, Solution &s) {
                 if (!trip_endurance_optimistic(p, trial, trial.drone_queue[to_trip_after])) continue;
                 if (!from_removed && from_trip < trial.drone_queue.size() && !trip_endurance_optimistic(p, trial, trial.drone_queue[from_trip])) continue;
 
-                double ts = 0.0; auto res = fitness_full(p, trial, &ts);
+                double ts = 0.0, tb = 0.0; auto res = fitness_full(p, trial, &ts, &tb);
                 if (!res.first) continue;
                 double new_fit = res.second;
                 int mv = multi_visit_trip_count(trial);
@@ -3038,14 +3117,14 @@ static bool relocate_sync_point_first_improve(const Params &p, Solution &s) {
                 }
 
 	                int cand_trip_cnt = (int)trial.drone_queue.size();
-	                if (better_lex(new_fit, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, ts,
+	                if (better_lex(new_fit, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, tb,
 	                               best_fit, best_trip_cnt, best_multi, best_max_wait, best_total_wait, best_truck_sum)) {
 	                    best_fit = new_fit;
 	                    best_trip_cnt = cand_trip_cnt;
 	                    best_multi = mv;
 	                    best_max_wait = cand_max_wait;
 	                    best_total_wait = cand_total_wait;
-	                    best_truck_sum = ts;
+	                    best_truck_sum = tb;
 	                    best_sol = std::move(trial);
 	                    improved_any = true;
 	                }
@@ -3078,7 +3157,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
     }
 
     double best_truck_sum = 0.0;
-    auto base = fitness_full(p, s, &best_truck_sum);
+    auto base = fitness_full(p, s, nullptr, &best_truck_sum);
     if (!base.first) return false;
     double best_fit = base.second;
 	    Solution best_sol = s;
@@ -3352,10 +3431,10 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
             rebuild_loaded_from_drone_marks(p, cand);
             std::string reason_local;
             if (!validate_solution(p, cand, reason_local)) return false;
-            double ts_loc = 0.0;
-            auto res = fitness_full_no_validate(p, cand, &ts_loc);
+            double ts_loc = 0.0, tb_loc = 0.0;
+            auto res = fitness_full_no_validate(p, cand, &ts_loc, &tb_loc);
             if (!res.first) return false;
-            consider(std::move(cand), res.second, ts_loc);
+            consider(std::move(cand), res.second, tb_loc);
             return true;
         };
 
@@ -3413,10 +3492,10 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                         rebuild_loaded_from_drone_marks(p, cand);
                         if (!trip_endurance_optimistic(p, cand, cand.drone_queue[tgi])) continue;
 
-                        double ts_loc = 0.0;
-                        auto res = fitness_full(p, cand, &ts_loc);
+                        double ts_loc = 0.0, tb_loc = 0.0;
+                        auto res = fitness_full(p, cand, &ts_loc, &tb_loc);
                         if (!res.first) continue;
-                        consider(std::move(cand), res.second, ts_loc);
+                        consider(std::move(cand), res.second, tb_loc);
                         inserted = true;
                     }
 	                }
@@ -3467,10 +3546,10 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
 	                            if (!trip_endurance_optimistic(p, cand, trip_mut)) continue;
 	                            std::string reason_local;
 	                            if (!validate_solution(p, cand, reason_local)) continue;
-	                            double ts_loc = 0.0;
-	                            auto res = fitness_full_no_validate(p, cand, &ts_loc);
+	                            double ts_loc = 0.0, tb_loc = 0.0;
+	                            auto res = fitness_full_no_validate(p, cand, &ts_loc, &tb_loc);
 	                            if (!res.first) continue;
-	                            consider(std::move(cand), res.second, ts_loc);
+	                            consider(std::move(cand), res.second, tb_loc);
 	                        }
 	                        tried++;
 	                    }
@@ -3486,10 +3565,10 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                 trial2.drone_queue.insert(trial2.drone_queue.begin()+ins_pos, new_trip);
                 rebuild_loaded_from_drone_marks(p, trial2);
                 if (!trip_endurance_optimistic(p, trial2, trial2.drone_queue[ins_pos])) continue;
-                double ts2 = 0.0; auto res2 = fitness_full(p, trial2, &ts2);
+                double ts2 = 0.0, tb2 = 0.0; auto res2 = fitness_full(p, trial2, &ts2, &tb2);
                 if (!res2.first) continue;
                 double new_fit2 = res2.second;
-                consider(std::move(trial2), new_fit2, ts2);
+                consider(std::move(trial2), new_fit2, tb2);
             }
             return false;
         };
@@ -3599,9 +3678,9 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                         rebuild_loaded_from_drone_marks(p, trial);
                         std::string reason_local;
                         if (!validate_solution(p, trial, reason_local)) { tried++; continue; }
-                        double ts = 0.0; auto res = fitness_full_no_validate(p, trial, &ts);
+                        double ts = 0.0, tb = 0.0; auto res = fitness_full_no_validate(p, trial, &ts, &tb);
                         if (!res.first) { tried++; continue; }
-                        consider(std::move(trial), res.second, ts);
+                        consider(std::move(trial), res.second, tb);
                         tried++;
                     }
                 }
@@ -3703,10 +3782,10 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
 
 	                                    std::string reason_local;
 	                                    if (!validate_solution(p, trial_ins, reason_local)) continue;
-	                                    double ts = 0.0;
-	                                    auto res = fitness_full_no_validate(p, trial_ins, &ts);
+	                                    double ts = 0.0, tb = 0.0;
+	                                    auto res = fitness_full_no_validate(p, trial_ins, &ts, &tb);
 	                                    if (!res.first) continue;
-	                                    consider(std::move(trial_ins), res.second, ts);
+	                                    consider(std::move(trial_ins), res.second, tb);
 	                                }
 	                            }
 	                        }
@@ -3722,10 +3801,10 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                             std::string reason_local;
                             if (!validate_solution(p, trial, reason_local)) goto skip_new_trip;
                         }
-                        double ts = 0.0; auto res = fitness_full_no_validate(p, trial, &ts);
+                        double ts = 0.0, tb = 0.0; auto res = fitness_full_no_validate(p, trial, &ts, &tb);
                         if (!res.first) goto skip_new_trip;
                         double new_fit = res.second;
-                        consider(std::move(trial), new_fit, ts);
+                        consider(std::move(trial), new_fit, tb);
                     }
                 }
                 skip_new_trip: ;
@@ -3757,10 +3836,10 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
                 }
 
                 rebuild_loaded_from_drone_marks(p, trial);
-                double ts = 0.0; auto res = fitness_full(p, trial, &ts);
+                double ts = 0.0, tb = 0.0; auto res = fitness_full(p, trial, &ts, &tb);
                 if (!res.first) continue;
                 double new_fit = res.second;
-                consider(std::move(trial), new_fit, ts);
+                consider(std::move(trial), new_fit, tb);
             }
         }
     }
@@ -3779,7 +3858,7 @@ static bool reorder_trip_first_improve(const Params &p, Solution &s) {
     std::vector<TruckTimeline> timelines(s.trucks.size());
     for (size_t k = 0; k < s.trucks.size(); ++k) timelines[k] = compute_truck_timeline(p, s.trucks[k]);
     double best_truck_sum = 0.0;
-    auto base = fitness_full(p, s, &best_truck_sum);
+    auto base = fitness_full(p, s, nullptr, &best_truck_sum);
     if (!base.first) return false;
 	    double best_fit = base.second;
 	    int best_multi = multi_visit_trip_count(s);
@@ -3805,7 +3884,7 @@ static bool reorder_trip_first_improve(const Params &p, Solution &s) {
 
             // quick endurance check for this trip only (optimistic)
             if (!trip_endurance_optimistic(p, trial, trip)) continue;
-            double ts = 0.0; auto res = fitness_full(p, trial, &ts);
+            double ts = 0.0, tb = 0.0; auto res = fitness_full(p, trial, &ts, &tb);
             if (!res.first) continue;
             double new_fit = res.second;
             int mv = multi_visit_trip_count(trial);
@@ -3823,14 +3902,14 @@ static bool reorder_trip_first_improve(const Params &p, Solution &s) {
                 cand_total_wait = w.second;
             }
 	            int cand_trip_cnt = (int)trial.drone_queue.size();
-	            if (better_lex(new_fit, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, ts,
+	            if (better_lex(new_fit, cand_trip_cnt, mv, cand_max_wait, cand_total_wait, tb,
 	                           best_fit, best_trip_cnt, best_multi, best_max_wait, best_total_wait, best_truck_sum)) {
 	                best_fit = new_fit;
 	                best_trip_cnt = cand_trip_cnt;
 	                best_multi = mv;
 	                best_max_wait = cand_max_wait;
 	                best_total_wait = cand_total_wait;
-	                best_truck_sum = ts;
+	                best_truck_sum = tb;
 	                best_sol = std::move(trial);
 	                improved_any = true;
 	            }
@@ -4340,7 +4419,7 @@ int main(int argc, char** argv){
 		    // Track best-seen in case we shake (which can worsen temporarily).
 		    Solution best_seen = sol;
 		    double best_sum = 0.0;
-		    auto best_res = fitness_full(p, best_seen, &best_sum);
+		    auto best_res = fitness_full(p, best_seen, nullptr, &best_sum);
 		    double best_fit = best_res.first ? best_res.second : std::numeric_limits<double>::infinity();
 		    int best_trip_cnt = (int)best_seen.drone_queue.size();
 		    int best_multi = multi_visit_trip_count(best_seen);
@@ -4349,17 +4428,17 @@ int main(int argc, char** argv){
 		    double best_total_wait = best_wait.second;
 
 		    auto update_best_seen = [&](const Solution &cand) {
-		        double ts = 0.0;
-		        auto fr = fitness_full(p, cand, &ts);
+		        double ts = 0.0, tb = 0.0;
+		        auto fr = fitness_full(p, cand, &ts, &tb);
 		        if (!fr.first) return;
 		        int trip_cnt = (int)cand.drone_queue.size();
 		        int mv = multi_visit_trip_count(cand);
 		        auto w = drone_wait_metrics(p, cand);
-		        if (better_overall(fr.second, trip_cnt, mv, w.first, w.second, ts,
+		        if (better_overall(fr.second, trip_cnt, mv, w.first, w.second, tb,
 		                           best_fit, best_trip_cnt, best_multi, best_max_wait, best_total_wait, best_sum)) {
 		            best_seen = cand;
 		            best_fit = fr.second;
-		            best_sum = ts;
+		            best_sum = tb;
 		            best_trip_cnt = trip_cnt;
 		            best_multi = mv;
 		            best_max_wait = w.first;
@@ -4489,10 +4568,10 @@ int main(int argc, char** argv){
 	            g_has_best_multi_solution = true;
 	            g_best_multi_solution = sol;
 	        } else {
-	            double ts_best = 0.0;
-	            auto rb = fitness_full(p, g_best_multi_solution, &ts_best);
-	            double ts_cur = 0.0;
-	            auto rc = fitness_full(p, sol, &ts_cur);
+	            double ts_best = 0.0, tb_best = 0.0;
+	            auto rb = fitness_full(p, g_best_multi_solution, &ts_best, &tb_best);
+	            double ts_cur = 0.0, tb_cur = 0.0;
+	            auto rc = fitness_full(p, sol, &ts_cur, &tb_cur);
 	            if (rb.first && rc.first) {
 	                double f_best = rb.second;
 	                double f_cur  = rc.second;
@@ -4504,8 +4583,8 @@ int main(int argc, char** argv){
 	                int trip_cur = (int)sol.drone_queue.size();
 	                auto w_cur = drone_wait_metrics(p, sol);
 
-	                if (better_lex(f_cur, trip_cur, mv_cur, w_cur.first, w_cur.second, ts_cur,
-	                               f_best, trip_best, mv_best, w_best.first, w_best.second, ts_best)) {
+	                if (better_lex(f_cur, trip_cur, mv_cur, w_cur.first, w_cur.second, tb_cur,
+	                               f_best, trip_best, mv_best, w_best.first, w_best.second, tb_best)) {
 	                    g_best_multi_solution = sol;
 	                }
 	            } else if (rc.first && !rb.first) {

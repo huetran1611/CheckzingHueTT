@@ -310,7 +310,9 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
     best_sol = (row.get("best_solution") or "").strip()
     best_multi_sol = (row.get("best_multi_solution") or "").strip()
 
-    out: Dict[str, Any] = {"job_id": job_id, "ok": True, "reason": ""}
+    out: Dict[str, Any] = {"ok": True, "reason": ""}
+    if job_id:
+        out["job_id"] = job_id
 
     # Load instance once per row. (Rows share instances, but caching isn't needed at this scale.)
     try:
@@ -323,6 +325,14 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
     if best_sol:
         ok, msg, mk, avg_used, _max_used, _trips, avg_sortie, avg_truck_wait, avg_drone_wait, legs = validate_with_stats(inst, a, l, best_sol)
         if not ok or mk is None:
+            out["best_fitness"] = ""
+            out["best_drone_avg_trip_time"] = ""
+            out["best_avg_sortie_time"] = ""
+            out["best_avg_truck_wait_for_drone"] = ""
+            out["best_avg_drone_wait_for_truck"] = ""
+            out["best_multi_visit_trip_count"] = ""
+            out["best_drone_trip_count"] = ""
+            out["best_avg_customers_per_trip"] = ""
             out["ok"] = False
             out["reason"] = "best_solution invalid: " + msg
             return out
@@ -340,10 +350,27 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
             str(int(stats["drone_trip_count"])) if stats["drone_trip_count"] is not None else ""
         )
         out["best_avg_customers_per_trip"] = _fmt_float(stats["avg_customers_per_trip"])
+    else:
+        out["best_fitness"] = ""
+        out["best_drone_avg_trip_time"] = ""
+        out["best_avg_sortie_time"] = ""
+        out["best_avg_truck_wait_for_drone"] = ""
+        out["best_avg_drone_wait_for_truck"] = ""
+        out["best_multi_visit_trip_count"] = ""
+        out["best_drone_trip_count"] = ""
+        out["best_avg_customers_per_trip"] = ""
 
     if best_multi_sol:
         ok, msg, mk, avg_used, _max_used, _trips, avg_sortie, avg_truck_wait, avg_drone_wait, legs = validate_with_stats(inst, a, l, best_multi_sol)
         if not ok or mk is None:
+            out["best_multi_fitness"] = ""
+            out["best_multi_drone_avg_trip_time"] = ""
+            out["best_multi_avg_sortie_time"] = ""
+            out["best_multi_avg_truck_wait_for_drone"] = ""
+            out["best_multi_avg_drone_wait_for_truck"] = ""
+            out["best_multi_multi_visit_trip_count"] = ""
+            out["best_multi_drone_trip_count"] = ""
+            out["best_multi_avg_customers_per_trip"] = ""
             out["ok"] = False
             out["reason"] = "best_multi_solution invalid: " + msg
             return out
@@ -391,14 +418,7 @@ def main() -> int:
         rows = list(r)
         fieldnames = r.fieldnames or []
 
-    required = {
-        "job_id",
-        "instance",
-        "A",
-        "L",
-        "best_solution",
-        "best_multi_solution",
-    }
+    required = {"instance", "A", "L", "best_solution", "best_multi_solution"}
     missing = required - set(fieldnames)
     if missing:
         print("Missing columns:", sorted(missing))
@@ -407,6 +427,17 @@ def main() -> int:
 
     # Ensure new columns exist
     new_cols = [
+        "best_drone_avg_trip_time",
+        "best_multi_visit_trip_count",
+        "best_drone_trip_count",
+        "best_avg_customers_per_trip",
+        "best_multi_drone_avg_trip_time",
+        "best_multi_multi_visit_trip_count",
+        "best_multi_drone_trip_count",
+        "best_multi_avg_customers_per_trip",
+        "best_solution_file",
+        "best_multi_solution_file",
+        "log",
         "best_avg_sortie_time",
         "best_avg_truck_wait_for_drone",
         "best_avg_drone_wait_for_truck",
@@ -421,26 +452,44 @@ def main() -> int:
                 row[c] = ""
 
     # Recompute in parallel
-    results: Dict[str, Dict[str, Any]] = {}
+    results: Dict[int, Dict[str, Any]] = {}
     failures: List[Dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(recompute_for_row, row) for row in rows]
+        futs = {ex.submit(recompute_for_row, row): idx for idx, row in enumerate(rows)}
         for fut in as_completed(futs):
             out = fut.result()
-            jid = str(out.get("job_id", ""))
-            results[jid] = out
+            idx = futs[fut]
+            results[idx] = out
 
     # Apply results to rows
     ok_cnt = 0
     fail_cnt = 0
-    for row in rows:
-        jid = (row.get("job_id") or "").strip()
-        out = results.get(jid)
-        if not out or not out.get("ok"):
+    for idx, row in enumerate(rows):
+        out = results.get(idx)
+        if not out:
             fail_cnt += 1
             failures.append(
                 {
-                    "job_id": jid,
+                    "row_index": str(idx),
+                    "job_id": (row.get("job_id") or "").strip(),
+                    "instance": (row.get("instance") or "").strip(),
+                    "A": (row.get("A") or "").strip(),
+                    "L": (row.get("L") or "").strip(),
+                    "reason": (out or {}).get("reason", "unknown failure"),
+                }
+            )
+            continue
+        for k, v in out.items():
+            if k in ("row_index", "job_id", "ok", "reason"):
+                continue
+            if k in fieldnames:
+                row[k] = str(v)
+        if not out.get("ok"):
+            fail_cnt += 1
+            failures.append(
+                {
+                    "row_index": str(idx),
+                    "job_id": (row.get("job_id") or "").strip(),
                     "instance": (row.get("instance") or "").strip(),
                     "A": (row.get("A") or "").strip(),
                     "L": (row.get("L") or "").strip(),
@@ -449,11 +498,6 @@ def main() -> int:
             )
             continue
         ok_cnt += 1
-        for k, v in out.items():
-            if k in ("job_id", "ok", "reason"):
-                continue
-            if k in fieldnames:
-                row[k] = str(v)
 
     # Write back in-place with backup
     backup = csv_path.with_suffix(csv_path.suffix + ".bak2")
@@ -475,7 +519,7 @@ def main() -> int:
     if failures:
         rep = pathlib.Path("batch_init_ats_improved_with_multivisit_recompute_failures.csv")
         with rep.open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=["job_id", "instance", "A", "L", "reason"])
+            w = csv.DictWriter(f, fieldnames=["row_index", "job_id", "instance", "A", "L", "reason"])
             w.writeheader()
             w.writerows(failures)
         print("Wrote failures report:", rep)
