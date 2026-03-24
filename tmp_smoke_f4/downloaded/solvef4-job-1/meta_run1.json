@@ -1,7 +1,7 @@
 {
   "job_id": 1,
   "run_index": 1,
-  "instance": "test_data/data_demand_random_50_batch_all1_equal_cluster/C101_0.5.dat",
+  "instance": "test_data/data_demand_random_50_batch_all1_equal_random/C101_0.5.dat",
   "A": 4.0,
   "L": 60.0,
   "best_fitness": 527.0,
