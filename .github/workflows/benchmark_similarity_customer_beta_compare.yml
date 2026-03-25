@@ -45,7 +45,7 @@ jobs:
       - name: Build dynamic matrix from folder structure
         id: build
         env:
-          INPUT_CUSTOMERS: ${{ github.event.inputs.customers || '50' }}
+          INPUT_CUSTOMERS: ${{ github.event.inputs.customers || '10,15,20,30' }}
           INPUT_BETAS: ${{ github.event.inputs.betas || '0.5,2,3' }}
           INPUT_RUNS: ${{ github.event.inputs.runs || '5' }}
         run: |
