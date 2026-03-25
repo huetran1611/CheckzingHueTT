@@ -7,7 +7,7 @@ on:
       customers:
         description: "Comma-separated customer sizes (e.g. 10,15,20)"
         required: true
-        default: "10,15,20,30"
+        default: "50"
       betas:
         description: "Comma-separated beta values (e.g. 0.5,2,3)"
         required: true
