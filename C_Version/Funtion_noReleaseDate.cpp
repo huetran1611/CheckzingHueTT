@@ -690,44 +690,73 @@ static bool insert_rendezvous_first_improve(const Params &p, Solution &s) {
 static bool has_multi_visit(const Solution &s);
 
 // Adaptive Tabu Search skeleton (no diversification), with roulette-wheel neighborhood selection.
-// Simple diversification: reverse subsequences inside each truck route (excluding depots)
+// Diversification: pick one random 3-customer segment from each truck route, then cyclic-shift
+// these segments across trucks (truck k -> truck k+1, last -> first). Apply this operation
+// three consecutive times to create the diversified solution used for the next segment.
 static Solution diversify_solution(const Params &p, const Solution &s, std::mt19937 &rng) {
-    Solution best = s;
-    double best_sum = 0.0; auto base = fitness_full(p, best, &best_sum);
-    if (!base.first) return s; // should not happen, keep original
+    const int n_trucks = (int)s.trucks.size();
+    if (n_trucks <= 0) return s;
 
-    for (size_t k = 0; k < s.trucks.size(); ++k) {
-        const auto &route = s.trucks[k].stops;
-        int cust_cnt = (int)route.size() - 2; // exclude depots
-        if (cust_cnt < 4) continue; // need at least 4 to reverse meaningfully
-        int max_len = cust_cnt / 2;
-        if (max_len < 2) continue;
-        std::uniform_int_distribution<int> len_dist(2, max_len);
-        int r = len_dist(rng);
-        for (int len = r; len <= max_len; ++len) {
-            for (int start = 1; start + len <= (int)route.size() - 1; ++start) {
-                Solution cand = s;
-                auto &st = cand.trucks[k].stops;
-                std::reverse(st.begin() + start, st.begin() + start + len);
-                // any truck move invalidates drone plan
-                repair_after_truck_move(cand);
-                double ts = 0.0; auto fr = fitness_full(p, cand, &ts);
-                if (fr.first && (fr.second + 1e-9 < base.second) && (fr.second + 1e-9 < best_sum || fr.second + 1e-9 < base.second)) {
-                    best = std::move(cand);
-                    best_sum = ts;
-                    base.second = fr.second;
+    const int seg_len = 3;
+    const int repeat_times = 3;
+    const int max_attempts = 16;
+
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        Solution cand = s;
+        bool ok = true;
+
+        for (int rep = 0; rep < repeat_times; ++rep) {
+            std::vector<int> starts(n_trucks, -1);
+            std::vector<std::vector<TruckStop>> segs(n_trucks);
+
+            for (int k = 0; k < n_trucks; ++k) {
+                const auto &st = cand.trucks[k].stops;
+                int cust_cnt = (int)st.size() - 2; // exclude depots
+                if (cust_cnt < seg_len) {
+                    ok = false;
+                    break;
                 }
+                int lo = 1;
+                int hi = (int)st.size() - 1 - seg_len; // inclusive
+                std::uniform_int_distribution<int> start_dist(lo, hi);
+                int start = start_dist(rng);
+                starts[k] = start;
+                segs[k].assign(st.begin() + start, st.begin() + start + seg_len);
+            }
+            if (!ok) break;
+
+            // Remove selected segments from all trucks.
+            for (int k = 0; k < n_trucks; ++k) {
+                auto &st = cand.trucks[k].stops;
+                st.erase(st.begin() + starts[k], st.begin() + starts[k] + seg_len);
+            }
+
+            // Cyclic transfer: segment from truck k goes to truck (k+1) mod n_trucks.
+            for (int k = 0; k < n_trucks; ++k) {
+                int to = (k + 1) % n_trucks;
+                auto &to_st = cand.trucks[to].stops;
+                int ins_lo = 1;
+                int ins_hi = (int)to_st.size() - 1; // before ending depot
+                std::uniform_int_distribution<int> ins_dist(ins_lo, ins_hi);
+                int ins_pos = ins_dist(rng);
+                to_st.insert(to_st.begin() + ins_pos, segs[k].begin(), segs[k].end());
             }
         }
+
+        if (!ok) continue;
+        repair_after_truck_move(cand);
+        if (fitness_full(p, cand, nullptr).first) return cand;
     }
-    return best;
+
+    // Fallback: keep original if random diversification cannot produce a valid candidate.
+    return s;
 }
 
 static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2.0, int DIV = 3) {
     // Exploration settings tuned per request:
     int NIMP = 100;         // iterations without improvement to end a segment
-    SEG = 12;               // consecutive non-improving segments before diversification
-    DIV = 3;                // diversification rounds without improvement to stop
+    SEG = 10;               // consecutive non-improving segments before diversification
+    DIV = 8;                // diversification rounds without improvement to stop
     const int neigh_count = 4; // truck neighborhoods only: 1-0, 1-1, 2-1, 2-opt
     std::vector<double> weight(neigh_count, 1.0 / neigh_count);
     std::vector<double> score(neigh_count, 0.0);
@@ -851,17 +880,23 @@ static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2
         if (stopped_by_time) break;
 
         // diversification phase
-        Solution div_sol = diversify_solution(p, best_sol, rng);
+        Solution div_sol = diversify_solution(p, s, rng);
         double div_sum = 0.0; auto fres = fitness_full(p, div_sol, &div_sum);
-        if (fres.first && (fres.second + 1e-9 < best_fit)) {
-            best_fit = fres.second; best_sum = div_sum; best_sol = div_sol; s = div_sol; div_no_improve = 0;
-            if (has_multi_visit(div_sol) && fres.second + 1e-9 < best_multi_fit) {
-                std::string mv_reason;
-                if (validate_solution(p, div_sol, mv_reason)) {
-                    best_multi_fit = fres.second;
-                    best_multi_sol = div_sol;
-                    std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << " (after diversification)\n";
+        if (fres.first) {
+            // Continue the next segment from diversified solution regardless of global-best improvement.
+            s = div_sol;
+            if (fres.second + 1e-9 < best_fit) {
+                best_fit = fres.second; best_sum = div_sum; best_sol = div_sol; div_no_improve = 0;
+                if (has_multi_visit(div_sol) && fres.second + 1e-9 < best_multi_fit) {
+                    std::string mv_reason;
+                    if (validate_solution(p, div_sol, mv_reason)) {
+                        best_multi_fit = fres.second;
+                        best_multi_sol = div_sol;
+                        std::cout << "[ATS] new best multi-visit fit " << best_multi_fit << " (after diversification)\n";
+                    }
                 }
+            } else {
+                div_no_improve++;
             }
         } else {
             div_no_improve++;

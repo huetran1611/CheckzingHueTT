@@ -1176,7 +1176,7 @@ static Solution diversify_solution(const Params &p, const Solution &s, std::mt19
 
 static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2.0, int DIV = 3) {
     // Keep caller-provided SEG/DIV; scale NIMP mildly with instance size.
-    int NIMP = std::max(20, (int)std::round(0.4 * (double)p.customers.size()));
+    int NIMP = std::max(20, (int)std::round(2 * (double)p.customers.size()/log((double)p.customers.size());
     const int ats_max_iters = env_int("ATS_MAX_ITERS", -1); // cap total ATS iterations (inner-loop iterations)
     int ats_iter_total = 0;
     const int neigh_count = 4; // truck neighborhoods only: 1-0, 1-1, 2-1, 2-opt

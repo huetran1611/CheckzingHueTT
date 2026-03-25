@@ -37,7 +37,7 @@ jobs:
           mkdir -p results
           : > cmds.txt
           for r in $(seq 1 ${{ matrix.task.reps }}); do
-            echo "SOL_OUT_DIR=results SOLVER_TIME_LIMIT_SEC=7200 LS_LIGHT_SEEN_CAP=200000 LS_STRONG_SEEN_CAP=200000 ATS_SEG=8 ATS_DIV=8 ATS_MAX_ITERS=3000 LS_SHAKE_ON_STAGNATION=1 LS_SHAKE_TRIES=120 LS_RELAXED_MERGE=1 LS_EPS_MAKESPAN=0.02 LS_INSERT_CAND_PER_TRIP=120 LS_INSERT_EVAL_TOP=60 ./C_Version/read_data_f4 '${{ matrix.task.instance }}' '${{ matrix.task.A }}' '${{ matrix.task.L }}' > results/${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r${r}.log" >> cmds.txt
+            echo "SOL_OUT_DIR=results SOLVER_TIME_LIMIT_SEC=7200 LS_LIGHT_SEEN_CAP=200000 LS_STRONG_SEEN_CAP=200000 ATS_SEG=8 ATS_DIV=3 ATS_MAX_ITERS=3000 LS_SHAKE_ON_STAGNATION=1 LS_SHAKE_TRIES=120 LS_RELAXED_MERGE=1 LS_EPS_MAKESPAN=0.02 LS_INSERT_CAND_PER_TRIP=120 LS_INSERT_EVAL_TOP=60 ./C_Version/read_data_f4 '${{ matrix.task.instance }}' '${{ matrix.task.A }}' '${{ matrix.task.L }}' > results/${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r${r}.log" >> cmds.txt
           done
           cat cmds.txt
           parallel -j3 < cmds.txt
