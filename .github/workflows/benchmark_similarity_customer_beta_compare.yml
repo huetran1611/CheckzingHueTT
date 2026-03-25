@@ -7,7 +7,7 @@ on:
       customers:
         description: "Comma-separated customer sizes (e.g. 10,15,20)"
         required: true
-        default: "50"
+        default: "10,15,20,30"
       betas:
         description: "Comma-separated beta values (e.g. 0.5,2,3)"
         required: true
@@ -45,7 +45,7 @@ jobs:
       - name: Build dynamic matrix from folder structure
         id: build
         env:
-          INPUT_CUSTOMERS: ${{ github.event.inputs.customers || '10,15,20' }}
+          INPUT_CUSTOMERS: ${{ github.event.inputs.customers || '50' }}
           INPUT_BETAS: ${{ github.event.inputs.betas || '0.5,2,3' }}
           INPUT_RUNS: ${{ github.event.inputs.runs || '5' }}
         run: |
@@ -149,6 +149,28 @@ jobs:
           from pathlib import Path
           import openpyxl
 
+          def has_multi_visit_drone_trip(solution_obj):
+              if not isinstance(solution_obj, list) or len(solution_obj) < 2:
+                  return False
+              drone_trips = solution_obj[1]
+              if not isinstance(drone_trips, list):
+                  return False
+              for trip in drone_trips:
+                  if not isinstance(trip, list):
+                      continue
+                  delivered_points = set()
+                  for stop in trip:
+                      if (
+                          isinstance(stop, list)
+                          and len(stop) >= 2
+                          and isinstance(stop[1], list)
+                      ):
+                          for point in stop[1]:
+                              delivered_points.add(point)
+                  if len(delivered_points) > 1:
+                      return True
+              return False
+
           strategy = os.environ["STRATEGY"]
           customer = os.environ["NUMBER_OF_CITIES"]
           beta = os.environ["BETA"]
@@ -176,30 +198,31 @@ jobs:
           end_segments = sh.cell(1, 6).value
           tabu_iterations = sh.cell(1, 7).value
           segments_done = sh.cell(1, 8).value
+          best_single_visit_fitness = sh.cell(1, 13).value
+          best_single_visit_solution = sh.cell(1, 14).value
+          best_multi_visit_fitness = sh.cell(1, 15).value
+          best_multi_visit_solution = sh.cell(1, 16).value
           wb.close()
 
           best_solution_str = "" if best_solution is None else str(best_solution)
           segments = segments_done if segments_done not in ("", None) else end_segments
 
-          best_solution_one_visit = ""
-          best_solution_multi_visit = ""
-          try:
-              sol = ast.literal_eval(best_solution_str)
-              if isinstance(sol, list) and len(sol) > 0 and isinstance(sol[0], list):
-                  one_visit = []
-                  for truck in sol[0]:
-                      if isinstance(truck, list):
-                          one_visit.append([node[0] if isinstance(node, list) and node else node for node in truck])
-                      else:
-                          one_visit.append(truck)
-                  best_solution_one_visit = str(one_visit)
-              if isinstance(sol, list) and len(sol) > 1:
-                  best_solution_multi_visit = str(sol[1])
-          except Exception:
-              pass
+          best_solution_one_visit = "" if best_single_visit_solution is None else str(best_single_visit_solution)
+          best_solution_multi_visit = "" if best_multi_visit_solution is None else str(best_multi_visit_solution)
+          fitness_best_solution_one_visit = best_single_visit_fitness
+          fitness_best_solution_multi_visit = best_multi_visit_fitness
 
-          if not best_solution_multi_visit:
-              best_solution_multi_visit = best_solution_str
+          if not best_solution_one_visit and not best_solution_multi_visit and best_solution_str:
+              try:
+                  sol = ast.literal_eval(best_solution_str)
+                  if has_multi_visit_drone_trip(sol):
+                      best_solution_multi_visit = best_solution_str
+                      fitness_best_solution_multi_visit = best_fitness
+                  else:
+                      best_solution_one_visit = best_solution_str
+                      fitness_best_solution_one_visit = best_fitness
+              except Exception:
+                  pass
 
           row = {
               "customer": customer,
@@ -213,8 +236,8 @@ jobs:
               "best_solution_one_visit": best_solution_one_visit,
               "best_solution_multi_visit": best_solution_multi_visit,
               "fitness_best_solution": best_fitness,
-              "fitness_best_solution_one_visit": best_fitness,
-              "fitness_best_solution_multi_visit": best_fitness,
+              "fitness_best_solution_one_visit": fitness_best_solution_one_visit,
+              "fitness_best_solution_multi_visit": fitness_best_solution_multi_visit,
               "runtime_sec": runtime_sec,
               "best_t_segment": best_t_segment,
           }
@@ -267,6 +290,28 @@ jobs:
           from pathlib import Path
           import openpyxl
 
+          def has_multi_visit_drone_trip(solution_obj):
+              if not isinstance(solution_obj, list) or len(solution_obj) < 2:
+                  return False
+              drone_trips = solution_obj[1]
+              if not isinstance(drone_trips, list):
+                  return False
+              for trip in drone_trips:
+                  if not isinstance(trip, list):
+                      continue
+                  delivered_points = set()
+                  for stop in trip:
+                      if (
+                          isinstance(stop, list)
+                          and len(stop) >= 2
+                          and isinstance(stop[1], list)
+                      ):
+                          for point in stop[1]:
+                              delivered_points.add(point)
+                  if len(delivered_points) > 1:
+                      return True
+              return False
+
           strategy = os.environ["STRATEGY"]
           customer = os.environ["NUMBER_OF_CITIES"]
           beta = os.environ["BETA"]
@@ -294,30 +339,31 @@ jobs:
           end_segments = sh.cell(1, 6).value
           tabu_iterations = sh.cell(1, 7).value
           segments_done = sh.cell(1, 8).value
+          best_single_visit_fitness = sh.cell(1, 13).value
+          best_single_visit_solution = sh.cell(1, 14).value
+          best_multi_visit_fitness = sh.cell(1, 15).value
+          best_multi_visit_solution = sh.cell(1, 16).value
           wb.close()
 
           best_solution_str = "" if best_solution is None else str(best_solution)
           segments = segments_done if segments_done not in ("", None) else end_segments
 
-          best_solution_one_visit = ""
-          best_solution_multi_visit = ""
-          try:
-              sol = ast.literal_eval(best_solution_str)
-              if isinstance(sol, list) and len(sol) > 0 and isinstance(sol[0], list):
-                  one_visit = []
-                  for truck in sol[0]:
-                      if isinstance(truck, list):
-                          one_visit.append([node[0] if isinstance(node, list) and node else node for node in truck])
-                      else:
-                          one_visit.append(truck)
-                  best_solution_one_visit = str(one_visit)
-              if isinstance(sol, list) and len(sol) > 1:
-                  best_solution_multi_visit = str(sol[1])
-          except Exception:
-              pass
+          best_solution_one_visit = "" if best_single_visit_solution is None else str(best_single_visit_solution)
+          best_solution_multi_visit = "" if best_multi_visit_solution is None else str(best_multi_visit_solution)
+          fitness_best_solution_one_visit = best_single_visit_fitness
+          fitness_best_solution_multi_visit = best_multi_visit_fitness
 
-          if not best_solution_multi_visit:
-              best_solution_multi_visit = best_solution_str
+          if not best_solution_one_visit and not best_solution_multi_visit and best_solution_str:
+              try:
+                  sol = ast.literal_eval(best_solution_str)
+                  if has_multi_visit_drone_trip(sol):
+                      best_solution_multi_visit = best_solution_str
+                      fitness_best_solution_multi_visit = best_fitness
+                  else:
+                      best_solution_one_visit = best_solution_str
+                      fitness_best_solution_one_visit = best_fitness
+              except Exception:
+                  pass
 
           row = {
               "customer": customer,
@@ -331,8 +377,8 @@ jobs:
               "best_solution_one_visit": best_solution_one_visit,
               "best_solution_multi_visit": best_solution_multi_visit,
               "fitness_best_solution": best_fitness,
-              "fitness_best_solution_one_visit": best_fitness,
-              "fitness_best_solution_multi_visit": best_fitness,
+              "fitness_best_solution_one_visit": fitness_best_solution_one_visit,
+              "fitness_best_solution_multi_visit": fitness_best_solution_multi_visit,
               "runtime_sec": runtime_sec,
               "best_t_segment": best_t_segment,
           }
@@ -376,6 +422,16 @@ jobs:
     needs: benchmark_instances
     runs-on: ubuntu-latest
     steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install report dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas openpyxl
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
