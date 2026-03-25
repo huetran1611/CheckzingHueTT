@@ -1,5 +1,6 @@
 import ast
 import csv
+import json
 import math
 import os
 import pathlib
@@ -27,6 +28,7 @@ VALIDATE_STATS_RE = re.compile(
 
 VALIDATE_WAITS_RE = re.compile(
     r"\[VALIDATE_WAITS\]\s+OK\s+avg_sortie_time\s+(?P<avg_sortie>[0-9]+(?:\.[0-9]+)?)\s+"
+    r"(?:total_sortie_time\s+(?P<total_sortie>[0-9]+(?:\.[0-9]+)?)\s+)?"
     r"avg_truck_wait\s+(?P<avg_truck_wait>[0-9]+(?:\.[0-9]+)?)\s+"
     r"avg_drone_wait\s+(?P<avg_drone_wait>[0-9]+(?:\.[0-9]+)?)\s+"
     r"trips\s+(?P<trips>[0-9]+)\s+legs\s+(?P<legs>[0-9]+)"
@@ -103,6 +105,17 @@ def parse_solution_text(solution_text: str) -> Optional[Any]:
     if not isinstance(data, list) or len(data) != 2:
         return None
     return data
+
+
+def normalize_solution_text(solution_text: str) -> str:
+    txt = (solution_text or "").strip()
+    if not txt:
+        return ""
+    try:
+        data = ast.literal_eval(txt)
+        return json.dumps(data, separators=(",", ":"))
+    except Exception:
+        return " ".join(txt.split())
 
 
 def compute_solution_stats(solution: Any, instance: Dict[str, Any]) -> Dict[str, Optional[float]]:
@@ -237,6 +250,7 @@ def validate_with_stats(
     Optional[float],  # max_used
     Optional[int],    # trips
     Optional[float],  # avg_sortie_time
+    Optional[float],  # total_sortie_time
     Optional[float],  # avg_truck_wait
     Optional[float],  # avg_drone_wait
     Optional[int],    # legs
@@ -254,16 +268,17 @@ def validate_with_stats(
         out = (p.stdout or "").strip()
         line = next((ln for ln in out.splitlines() if "[VALIDATE]" in ln), out.splitlines()[-1] if out else "")
         if p.returncode != 0 or "[VALIDATE] OK" not in out:
-            return False, line or f"exit={p.returncode}", None, None, None, None, None, None, None, None
+            return False, line or f"exit={p.returncode}", None, None, None, None, None, None, None, None, None
         m = VALIDATE_RE.search(line)
         if not m:
-            return False, "cannot parse validate output: " + (line or ""), None, None, None, None, None, None, None, None
+            return False, "cannot parse validate output: " + (line or ""), None, None, None, None, None, None, None, None, None
 
         makespan = float(m.group("makespan"))
         avg_used = None
         max_used = None
         trips = None
         avg_sortie = None
+        total_sortie = None
         avg_truck_wait = None
         avg_drone_wait = None
         legs = None
@@ -283,11 +298,15 @@ def validate_with_stats(
             m3 = VALIDATE_WAITS_RE.search(ln.strip())
             if m3:
                 avg_sortie = float(m3.group("avg_sortie"))
+                total_sortie = float(m3.group("total_sortie")) if m3.group("total_sortie") is not None else None
                 avg_truck_wait = float(m3.group("avg_truck_wait"))
                 avg_drone_wait = float(m3.group("avg_drone_wait"))
                 legs = int(m3.group("legs"))
+                if total_sortie is None:
+                    trips_wait = int(m3.group("trips"))
+                    total_sortie = avg_sortie * float(trips_wait)
                 break
-        return True, line, makespan, avg_used, max_used, trips, avg_sortie, avg_truck_wait, avg_drone_wait, legs
+        return True, line, makespan, avg_used, max_used, trips, avg_sortie, total_sortie, avg_truck_wait, avg_drone_wait, legs
     finally:
         try:
             os.unlink(seed_path)
@@ -323,11 +342,12 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
         return out
 
     if best_sol:
-        ok, msg, mk, avg_used, _max_used, _trips, avg_sortie, avg_truck_wait, avg_drone_wait, legs = validate_with_stats(inst, a, l, best_sol)
+        ok, msg, mk, avg_used, _max_used, _trips, avg_sortie, total_sortie, avg_truck_wait, avg_drone_wait, legs = validate_with_stats(inst, a, l, best_sol)
         if not ok or mk is None:
             out["best_fitness"] = ""
             out["best_drone_avg_trip_time"] = ""
             out["best_avg_sortie_time"] = ""
+            out["best_total_sortie_time"] = ""
             out["best_avg_truck_wait_for_drone"] = ""
             out["best_avg_drone_wait_for_truck"] = ""
             out["best_multi_visit_trip_count"] = ""
@@ -341,6 +361,7 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
         # Redefine to match endurance measure: (return-depart) - (#rendezvous*sigma)
         out["best_drone_avg_trip_time"] = _fmt_float(avg_used)
         out["best_avg_sortie_time"] = _fmt_float(avg_sortie)
+        out["best_total_sortie_time"] = _fmt_float(total_sortie)
         out["best_avg_truck_wait_for_drone"] = _fmt_float(avg_truck_wait)
         out["best_avg_drone_wait_for_truck"] = _fmt_float(avg_drone_wait)
         out["best_multi_visit_trip_count"] = (
@@ -354,6 +375,7 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
         out["best_fitness"] = ""
         out["best_drone_avg_trip_time"] = ""
         out["best_avg_sortie_time"] = ""
+        out["best_total_sortie_time"] = ""
         out["best_avg_truck_wait_for_drone"] = ""
         out["best_avg_drone_wait_for_truck"] = ""
         out["best_multi_visit_trip_count"] = ""
@@ -361,11 +383,12 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
         out["best_avg_customers_per_trip"] = ""
 
     if best_multi_sol:
-        ok, msg, mk, avg_used, _max_used, _trips, avg_sortie, avg_truck_wait, avg_drone_wait, legs = validate_with_stats(inst, a, l, best_multi_sol)
+        ok, msg, mk, avg_used, _max_used, _trips, avg_sortie, total_sortie, avg_truck_wait, avg_drone_wait, legs = validate_with_stats(inst, a, l, best_multi_sol)
         if not ok or mk is None:
             out["best_multi_fitness"] = ""
             out["best_multi_drone_avg_trip_time"] = ""
             out["best_multi_avg_sortie_time"] = ""
+            out["best_multi_total_sortie_time"] = ""
             out["best_multi_avg_truck_wait_for_drone"] = ""
             out["best_multi_avg_drone_wait_for_truck"] = ""
             out["best_multi_multi_visit_trip_count"] = ""
@@ -378,6 +401,7 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
         stats = compute_solution_stats(parse_solution_text(best_multi_sol), inst_data)
         out["best_multi_drone_avg_trip_time"] = _fmt_float(avg_used)
         out["best_multi_avg_sortie_time"] = _fmt_float(avg_sortie)
+        out["best_multi_total_sortie_time"] = _fmt_float(total_sortie)
         out["best_multi_avg_truck_wait_for_drone"] = _fmt_float(avg_truck_wait)
         out["best_multi_avg_drone_wait_for_truck"] = _fmt_float(avg_drone_wait)
         out["best_multi_multi_visit_trip_count"] = (
@@ -392,6 +416,7 @@ def recompute_for_row(row: Dict[str, str]) -> Dict[str, Any]:
         out["best_multi_fitness"] = ""
         out["best_multi_drone_avg_trip_time"] = ""
         out["best_multi_avg_sortie_time"] = ""
+        out["best_multi_total_sortie_time"] = ""
         out["best_multi_avg_truck_wait_for_drone"] = ""
         out["best_multi_avg_drone_wait_for_truck"] = ""
         out["best_multi_multi_visit_trip_count"] = ""
@@ -418,6 +443,13 @@ def main() -> int:
         rows = list(r)
         fieldnames = r.fieldnames or []
 
+    # Keep solution payloads in one-line compact form.
+    for row in rows:
+        if "best_solution" in row:
+            row["best_solution"] = normalize_solution_text(row.get("best_solution", ""))
+        if "best_multi_solution" in row:
+            row["best_multi_solution"] = normalize_solution_text(row.get("best_multi_solution", ""))
+
     required = {"instance", "A", "L", "best_solution", "best_multi_solution"}
     missing = required - set(fieldnames)
     if missing:
@@ -439,9 +471,11 @@ def main() -> int:
         "best_multi_solution_file",
         "log",
         "best_avg_sortie_time",
+        "best_total_sortie_time",
         "best_avg_truck_wait_for_drone",
         "best_avg_drone_wait_for_truck",
         "best_multi_avg_sortie_time",
+        "best_multi_total_sortie_time",
         "best_multi_avg_truck_wait_for_drone",
         "best_multi_avg_drone_wait_for_truck",
     ]

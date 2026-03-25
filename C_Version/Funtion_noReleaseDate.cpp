@@ -74,6 +74,7 @@ static std::string format_scalar(double v);
 static void print_solution_compact(std::ostream &os, const Solution &sol, const Params &p);
 static std::string write_solution_json(const Solution &sol, const Params &p, const std::string &tag);
 static bool validate_solution(const Params &p, const Solution &sol, std::string &reason);
+static bool read_seed_solution_file(const Params &p, const std::string &path, Solution &sol, std::string &reason);
 static double truck_arrival_at(const Solution &sol, const std::vector<TruckTimeline> &tls, int truck_id, int customer);
 static int route_pos(const Solution &s, int truck_id, int customer);
 static bool trip_endurance_ok(const Params &p, const Solution &s, const std::vector<TruckTimeline> &tls, const DroneTrip &trip);
@@ -724,8 +725,8 @@ static Solution diversify_solution(const Params &p, const Solution &s, std::mt19
 
 static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2.0, int DIV = 3) {
     // Exploration settings tuned per request:
-    int NIMP = 20;          // iterations without improvement to end a segment
-    SEG = 10;                // segments without improvement before diversification
+    int NIMP = 100;         // iterations without improvement to end a segment
+    SEG = 12;               // consecutive non-improving segments before diversification
     DIV = 3;                // diversification rounds without improvement to stop
     const int neigh_count = 4; // truck neighborhoods only: 1-0, 1-1, 2-1, 2-opt
     std::vector<double> weight(neigh_count, 1.0 / neigh_count);
@@ -1078,6 +1079,158 @@ static std::string write_solution_json(const Solution &sol, const Params &p, con
 
     print_solution_compact(ofs, sol, p);
     return path;
+}
+
+struct SeedParser {
+    const std::string &s;
+    size_t i = 0;
+    explicit SeedParser(const std::string &src) : s(src) {}
+
+    void skip_ws() {
+        while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+    }
+
+    bool eat(char c) {
+        skip_ws();
+        if (i < s.size() && s[i] == c) { ++i; return true; }
+        return false;
+    }
+
+    bool parse_int(int &out) {
+        skip_ws();
+        if (i >= s.size()) return false;
+        bool neg = false;
+        if (s[i] == '-') { neg = true; ++i; }
+        if (i >= s.size() || !std::isdigit(static_cast<unsigned char>(s[i]))) return false;
+        long long v = 0;
+        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+            v = v * 10 + (s[i] - '0');
+            ++i;
+        }
+        out = static_cast<int>(neg ? -v : v);
+        return true;
+    }
+};
+
+static bool parse_int_list(SeedParser &p, std::vector<int> &out) {
+    out.clear();
+    if (!p.eat('[')) return false;
+    p.skip_ws();
+    if (p.eat(']')) return true;
+    while (true) {
+        int x = 0;
+        if (!p.parse_int(x)) return false;
+        out.push_back(x);
+        p.skip_ws();
+        if (p.eat(']')) break;
+        if (!p.eat(',')) return false;
+    }
+    return true;
+}
+
+static bool parse_stop_or_event(SeedParser &p, int &city, std::vector<int> &pkgs) {
+    if (!p.eat('[')) return false;
+    if (!p.parse_int(city)) return false;
+    if (!p.eat(',')) return false;
+    if (!parse_int_list(p, pkgs)) return false;
+    if (!p.eat(']')) return false;
+    return true;
+}
+
+static bool read_seed_solution_file(const Params &p, const std::string &path, Solution &sol, std::string &reason) {
+    std::ifstream in(path);
+    if (!in) {
+        reason = "Cannot open seed file: " + path;
+        return false;
+    }
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto eq = text.find('=');
+    if (eq != std::string::npos) text = text.substr(eq + 1);
+
+    SeedParser ps(text);
+    if (!ps.eat('[')) { reason = "Seed parse error: expected '['"; return false; }
+
+    // trucks block
+    if (!ps.eat('[')) { reason = "Seed parse error: expected trucks '['"; return false; }
+    std::vector<std::vector<std::pair<int,std::vector<int>>>> truck_rows;
+    ps.skip_ws();
+    if (!ps.eat(']')) {
+        while (true) {
+            if (!ps.eat('[')) { reason = "Seed parse error: expected truck route '['"; return false; }
+            std::vector<std::pair<int,std::vector<int>>> route;
+            ps.skip_ws();
+            if (!ps.eat(']')) {
+                while (true) {
+                    int city = 0;
+                    std::vector<int> pkgs;
+                    if (!parse_stop_or_event(ps, city, pkgs)) { reason = "Seed parse error: bad stop"; return false; }
+                    route.push_back({city, pkgs});
+                    ps.skip_ws();
+                    if (ps.eat(']')) break;
+                    if (!ps.eat(',')) { reason = "Seed parse error: expected ',' in route"; return false; }
+                }
+            }
+            truck_rows.push_back(std::move(route));
+            ps.skip_ws();
+            if (ps.eat(']')) break;
+            if (!ps.eat(',')) { reason = "Seed parse error: expected ',' between routes"; return false; }
+        }
+    }
+
+    // drone block (parsed but ignored in no-release mode)
+    if (!ps.eat(',')) { reason = "Seed parse error: expected ',' between blocks"; return false; }
+    if (!ps.eat('[')) { reason = "Seed parse error: expected drone '['"; return false; }
+    ps.skip_ws();
+    if (!ps.eat(']')) {
+        while (true) {
+            if (!ps.eat('[')) { reason = "Seed parse error: expected trip '['"; return false; }
+            ps.skip_ws();
+            if (!ps.eat(']')) {
+                while (true) {
+                    int city = 0;
+                    std::vector<int> pkgs;
+                    if (!parse_stop_or_event(ps, city, pkgs)) { reason = "Seed parse error: bad trip event"; return false; }
+                    ps.skip_ws();
+                    if (ps.eat(']')) break;
+                    if (!ps.eat(',')) { reason = "Seed parse error: expected ',' in trip"; return false; }
+                }
+            }
+            ps.skip_ws();
+            if (ps.eat(']')) break;
+            if (!ps.eat(',')) { reason = "Seed parse error: expected ',' between trips"; return false; }
+        }
+    }
+    if (!ps.eat(']')) { reason = "Seed parse error: expected final ']'"; return false; }
+
+    if ((int)truck_rows.size() != p.n_truck) {
+        reason = "Seed truck count mismatch";
+        return false;
+    }
+
+    Solution cand = make_empty_solution(p.n_truck);
+    for (int t = 0; t < p.n_truck; ++t) {
+        cand.trucks[t].truck_id = t;
+        cand.trucks[t].stops.clear();
+        const auto &rr = truck_rows[t];
+        if (rr.empty()) { reason = "Seed route is empty"; return false; }
+        for (const auto &st : rr) cand.trucks[t].stops.push_back(TruckStop{st.first, st.second});
+        if (cand.trucks[t].stops.front().customer != 0) { reason = "Seed route must start at depot"; return false; }
+        if (cand.trucks[t].stops.back().customer != 0) cand.trucks[t].stops.push_back(TruckStop{0,{}});
+    }
+
+    // Normalize to strict no-resupply model.
+    for (auto &tr : cand.trucks) {
+        for (auto &st : tr.stops) st.loaded_from_drone.clear();
+    }
+    cand.drone_queue.clear();
+
+    std::string why;
+    if (!validate_solution(p, cand, why)) {
+        reason = "Seed solution invalid after no-resupply normalization: " + why;
+        return false;
+    }
+    sol = std::move(cand);
+    return true;
 }
 
 // Lightweight drone LS: single pass, three operators, first-improve only.
@@ -1627,123 +1780,23 @@ static double truck_arrival_at(const Solution &sol, const std::vector<TruckTimel
     return tls[truck_id].arrival[idx];
 }
 
-// Synchronized fitness: simulate trucks and drones together (queue order for drones).
+// No-release / no-resupply fitness:
+// evaluate only truck completion times (all releases are forced to 0, drone queue is disabled).
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out) {
-    // Always gate objective evaluation by full feasibility.
+    // Gate by structural feasibility checks first.
     std::string reason;
     if (!validate_solution(p, sol, reason)) {
         return {false, std::numeric_limits<double>::infinity()};
     }
-
-    int K = p.n_truck;
-    const int n = (int)p.customers.size();
-    // mark packages resupplied by drones
-    std::vector<char> is_resupplied(n, 0);
-    for (const auto &trip : sol.drone_queue)
-        for (const auto &ev : trip.events)
-            for (auto pk : ev.packages) if (pk >= 0 && pk < n) is_resupplied[pk] = 1;
-
-    // state per truck
-    std::vector<size_t> idx(K, 0); // position in stops
-    std::vector<double> t_truck(K, 0.0);
-    std::vector<std::vector<int>> stops_cust(K);
-    std::vector<std::vector<int>> route_pos(K, std::vector<int>(n, -1));
-    for (int k = 0; k < K; ++k) {
-        int pos = 0;
-        for (const auto &st : sol.trucks[k].stops) {
-            stops_cust[k].push_back(st.customer);
-            if (st.customer >=0 && st.customer < n) route_pos[k][st.customer] = pos;
-            ++pos;
-        }
-        // start time = max release of any package carried by truck at depot (i.e., not resupplied)
-        double start = 0.0;
-        for (size_t i = 1; i + 1 < stops_cust[k].size(); ++i) {
-            int c = stops_cust[k][i];
-            if (!is_resupplied[c])
-                start = std::max(start, (double)p.customers[c].release);
-        }
-        t_truck[k] = start;
+    double max_truck_finish = 0.0;
+    double sum_truck_finish = 0.0;
+    for (const auto &tr : sol.trucks) {
+        TruckTimeline tl = compute_truck_timeline(p, tr);
+        max_truck_finish = std::max(max_truck_finish, tl.finish_time);
+        sum_truck_finish += tl.finish_time;
     }
-
-    auto move_truck_to = [&](int k, int target)->double {
-        // Advance truck k until it reaches 'target'. If target is not on the
-        // route, return +inf to mark the solution infeasible instead of
-        // overflowing the vector.
-        while (idx[k] < stops_cust[k].size() && stops_cust[k][idx[k]] != target) {
-            if (idx[k] + 1 >= stops_cust[k].size())
-                return std::numeric_limits<double>::infinity();
-            int from = stops_cust[k][idx[k]];
-            int to = stops_cust[k][idx[k] + 1];
-            t_truck[k] += p.truck_time[from][to];
-            idx[k]++;
-        }
-        if (idx[k] >= stops_cust[k].size())
-            return std::numeric_limits<double>::infinity();
-        return t_truck[k];
-    };
-
-    // drone availability PQ
-    using Node = std::pair<double,int>;
-    auto cmp = [](const Node &a, const Node &b){ return a.first > b.first; };
-    std::priority_queue<Node, std::vector<Node>, decltype(cmp)> dq(cmp);
-    for (int d = 0; d < p.n_drone; ++d) dq.push({0.0, d});
-    double max_drone_finish = 0.0;
-
-    for (const auto &trip : sol.drone_queue) {
-        if (trip.events.empty()) continue;
-        auto [avail, drone_id] = dq.top(); dq.pop();
-
-        int max_release = 0;
-        for (const auto &ev : trip.events)
-            for (auto pkg : ev.packages)
-                if (pkg >=0 && pkg < (int)p.customers.size()) max_release = std::max(max_release, p.customers[pkg].release);
-
-        const auto &first_ev = trip.events.front();
-        if (first_ev.rendezvous_customer<0 || first_ev.rendezvous_customer>=n || route_pos[first_ev.truck_id][first_ev.rendezvous_customer] < 0)
-            return {false, std::numeric_limits<double>::infinity()};
-        if (!p.reachable_mask.empty() && !p.reachable_mask[first_ev.rendezvous_customer]) return {false, std::numeric_limits<double>::infinity()};
-        double truck_arrival_first = move_truck_to(first_ev.truck_id, first_ev.rendezvous_customer);
-        if (!std::isfinite(truck_arrival_first)) return {false, std::numeric_limits<double>::infinity()};
-        double launch_earliest = truck_arrival_first - p.drone_time[0][first_ev.rendezvous_customer];
-        double depart = std::max({avail, (double)max_release, launch_earliest});
-        double t = depart;
-        int last = 0;
-
-        for (const auto &ev : trip.events) {
-            if (ev.rendezvous_customer<0 || ev.rendezvous_customer>=n) return {false, std::numeric_limits<double>::infinity()};
-            if (route_pos[ev.truck_id][ev.rendezvous_customer] < 0) return {false, std::numeric_limits<double>::infinity()};
-            if (!p.reachable_mask.empty() && !p.reachable_mask[ev.rendezvous_customer]) return {false, std::numeric_limits<double>::infinity()};
-            t += p.drone_time[last][ev.rendezvous_customer];
-            double truck_arrival = move_truck_to(ev.truck_id, ev.rendezvous_customer);
-            if (!std::isfinite(truck_arrival)) return {false, std::numeric_limits<double>::infinity()};
-            double drone_wait = 0, truck_wait = 0;
-            if (t < truck_arrival) { drone_wait = truck_arrival - t; t = truck_arrival; }
-            else { truck_wait = t - truck_arrival; t_truck[ev.truck_id] += truck_wait; }
-            t += p.sigma; // service
-            t_truck[ev.truck_id] += p.sigma;
-            last = ev.rendezvous_customer;
-        }
-        t += p.drone_time[last][0];
-        double trip_time = t - depart;
-        double endurance_measure = trip_time - p.sigma * (double)trip.events.size();
-        if (endurance_measure > p.L_d + 1e-9) return {false, std::numeric_limits<double>::infinity()};
-        max_drone_finish = std::max(max_drone_finish, t);
-        dq.push({t, drone_id});
-    }
-
-    // finish remaining truck legs
-    for (int k = 0; k < K; ++k) {
-        while (idx[k] + 1 < stops_cust[k].size()) {
-            int from = stops_cust[k][idx[k]];
-            int to = stops_cust[k][idx[k]+1];
-            t_truck[k] += p.truck_time[from][to];
-            idx[k]++;
-        }
-    }
-    double max_truck_finish = 0.0; double sum_truck = 0.0;
-    for (double tt : t_truck) { max_truck_finish = std::max(max_truck_finish, tt); sum_truck += tt; }
-    if (truck_sum_out) *truck_sum_out = sum_truck;
-    return {true, std::max(max_truck_finish, max_drone_finish)};
+    if (truck_sum_out) *truck_sum_out = sum_truck_finish;
+    return {true, max_truck_finish};
 }
 
 struct TruckRowLog {
@@ -1942,6 +1995,7 @@ static void improve_truck_routes_2opt(const Params &p, Solution &s) {
 // - Rendezvous must be within drone range (already checked by validate)
 // If a move improves global fitness, apply first found.
 static bool relocate_sync_point_first_improve(const Params &p, Solution &s) {
+    if (kDisableDroneResupply) return false;
     if (s.drone_queue.size() < 2) return false; // need at least 2 trips to merge
 
     // precompute truck timelines for validation
@@ -2009,6 +2063,7 @@ static bool relocate_sync_point_first_improve(const Params &p, Solution &s) {
 // - New rendezvous must be at the same or earlier position on that truck route than the package's delivery point.
 // - Capacity/endurance/range constraints enforced via validate_solution.
 static bool relocate_package_first_improve(const Params &p, Solution &s) {
+    if (kDisableDroneResupply) return false;
     // precompute timelines once
     std::vector<TruckTimeline> timelines(s.trucks.size());
     for (size_t k = 0; k < s.trucks.size(); ++k) timelines[k] = compute_truck_timeline(p, s.trucks[k]);
@@ -2256,6 +2311,7 @@ static bool relocate_package_first_improve(const Params &p, Solution &s) {
 // Move a drone trip to another position in the queue (same trip contents) while preserving truck-order constraint.
 // If move improves global fitness, apply first found.
 static bool reorder_trip_first_improve(const Params &p, Solution &s) {
+    if (kDisableDroneResupply) return false;
     if (s.drone_queue.size() < 2) return false;
 
     std::vector<TruckTimeline> timelines(s.trucks.size());
@@ -2292,6 +2348,21 @@ static bool reorder_trip_first_improve(const Params &p, Solution &s) {
 // ---------------- Feasibility checks ----------------
 
 static bool validate_solution(const Params &p, const Solution &sol, std::string &reason) {
+    if (kDisableDroneResupply) {
+        if (!sol.drone_queue.empty()) {
+            reason = "Drone resupply disabled: drone_queue must be empty";
+            return false;
+        }
+        for (const auto &tr : sol.trucks) {
+            for (const auto &st : tr.stops) {
+                if (!st.loaded_from_drone.empty()) {
+                    reason = "Drone resupply disabled: loaded_from_drone must be empty";
+                    return false;
+                }
+            }
+        }
+    }
+
     const int n = static_cast<int>(p.customers.size());
 
     // 1) Each customer appears once on trucks
@@ -2565,13 +2636,15 @@ int main(int argc, char** argv){
         g_solve_start = std::chrono::steady_clock::now();
         // Khi chạy từ thư mục C_Version, file dữ liệu nằm ở ../test_data/...
         if (argc < 2) {
-            std::cerr << "Usage: " << argv[0] << " <data_file> [M_d] [L_d]\n";
+            std::cerr << "Usage: " << argv[0] << " <data_file> [M_d] [L_d] [seed_solution_file]\n";
             return 1;
         }
         string path = argv[1];
         Params p; read_instance(path, p);
         if (argc >= 3) p.M_d = stod(argv[2]);
         if (argc >= 4) p.L_d = stod(argv[3]);
+        std::string seed_file;
+        if (argc >= 5) seed_file = argv[4];
     cout << "Loaded instance: " << path << "\n";
     cout << "Customers (incl. depot): " << p.customers.size() << "\n";
     cout << "Trucks: " << p.n_truck << ", Drones: " << p.n_drone << "\n";
@@ -2589,10 +2662,50 @@ int main(int argc, char** argv){
         }
     }
 
-    Solution sol = build_initial_truck_routes(p);
+    Solution sol;
+    bool loaded_seed = false;
+    std::string seed_reason;
+    if (!seed_file.empty()) {
+        if (read_seed_solution_file(p, seed_file, sol, seed_reason)) {
+            loaded_seed = true;
+            std::cout << "[SEED] loaded solution from: " << seed_file << "\n";
+        } else {
+            std::cout << "[SEED] load failed: " << seed_reason << "\n";
+            std::cout << "[SEED] fallback to heuristic initialization\n";
+        }
+    }
+    if (!loaded_seed) sol = build_initial_truck_routes(p);
     if (kDisableDroneResupply) {
         for (auto &tr : sol.trucks) for (auto &st : tr.stops) st.loaded_from_drone.clear();
         sol.drone_queue.clear();
+    }
+
+    bool validate_only = false;
+    if (const char *v = std::getenv("VALIDATE_ONLY")) {
+        if (*v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T')) validate_only = true;
+    }
+    if (validate_only) {
+        if (!loaded_seed) {
+            std::cout << "[VALIDATE] FAIL: seed not loaded";
+            if (!seed_reason.empty()) std::cout << ": " << seed_reason;
+            std::cout << "\n";
+            return 2;
+        }
+        std::string why;
+        if (!validate_solution(p, sol, why)) {
+            std::cout << "[VALIDATE] FAIL: " << why << "\n";
+            return 2;
+        }
+        double ts = 0.0;
+        auto res = fitness_full(p, sol, &ts);
+        if (!res.first) {
+            std::cout << "[VALIDATE] FAIL: fitness_full invalid\n";
+            return 2;
+        }
+        std::cout.setf(std::ios::fixed);
+        std::cout << std::setprecision(12);
+        std::cout << "[VALIDATE] OK makespan " << res.second << "\n";
+        return 0;
     }
     std::cout << "--- After initial truck build ---\n";
     print_truck_routes(sol);
@@ -2602,6 +2715,10 @@ int main(int argc, char** argv){
     std::cout << "Truck-only makespan: " << truck_only_makespan(p, sol) << "\n";
 
     improve_truck_routes_2opt(p, sol);
+    if (kDisableDroneResupply) {
+        for (auto &tr : sol.trucks) for (auto &st : tr.stops) st.loaded_from_drone.clear();
+        sol.drone_queue.clear();
+    }
     std::cout << "--- After truck 2-opt ---\n";
     print_truck_routes(sol);
     auto sim1 = simulate_with_log(p, sol);
@@ -2613,6 +2730,10 @@ int main(int argc, char** argv){
     int n_cust = (int)p.customers.size() - 1;
     (void)n_cust;
     ats_full(p, sol, /*SEG*/4, /*theta*/2.0, /*DIV*/3);
+    if (kDisableDroneResupply) {
+        for (auto &tr : sol.trucks) for (auto &st : tr.stops) st.loaded_from_drone.clear();
+        sol.drone_queue.clear();
+    }
     std::cout << "--- After ATS ---\n";
     auto sim_tab = simulate_with_log(p, sol);
     std::cout << "Fitness_full (makespan): " << sim_tab.makespan << "\n";

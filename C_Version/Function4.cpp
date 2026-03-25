@@ -137,6 +137,7 @@ static void print_solution_compact(std::ostream &os, const Solution &sol, const 
 static std::string write_solution_json(const Solution &sol, const Params &p, const std::string &tag);
 static bool validate_solution(const Params &p, const Solution &sol, std::string &reason);
 static bool read_seed_solution_file(const Params &p, const std::string &path, Solution &sol, std::string &reason);
+static void normalize_after_transform(const Params &p, Solution &sol);
 static double truck_arrival_at(const Solution &sol, const std::vector<TruckTimeline> &tls, int truck_id, int customer);
 static int route_pos(const Solution &s, int truck_id, int customer);
 static bool trip_endurance_ok(const Params &p, const Solution &s, const std::vector<TruckTimeline> &tls, const DroneTrip &trip);
@@ -622,6 +623,7 @@ static bool insert_rendezvous_first_improve(const Params &p, Solution &s);
 static bool is_pkg_resupplied(const Solution &s, int pkg);
 static int multi_visit_trip_count(const Solution &s);
 static std::pair<double,double> drone_wait_metrics(const Params &p, const Solution &sol);
+static double total_drone_trip_time(const Params &p, const Solution &sol);
 
 // 2-phase drone local search:
 // - Phase 1: accept only strict makespan improvements (avoid "sideways" moves that can trap first-improve).
@@ -2166,14 +2168,14 @@ static void repair_cross_truck_precedence_and_reassign(const Params &p, Solution
         int t = owner_truck[pkg];
         if (t < 0 || t >= (int)sol.trucks.size()) return;
         int rel_pkg = p.customers[pkg].release;
-        // If pkg goes to depot, remove earlier-release same-truck packages from drone trips.
+        // If pkg goes to depot, remove same-truck packages with release <= rel_pkg from drone trips.
         for (auto &trip : sol.drone_queue) {
             for (auto &ev : trip.events) {
                 std::vector<PackageId> kept;
                 kept.reserve(ev.packages.size());
                 for (PackageId q : ev.packages) {
                     if (q <= 0 || q >= n) continue;
-                    if (owner_truck[q] == t && p.customers[q].release < rel_pkg) continue;
+                    if (owner_truck[q] == t && p.customers[q].release <= rel_pkg) continue;
                     kept.push_back(q);
                 }
                 ev.packages.swap(kept);
@@ -2363,14 +2365,47 @@ static inline double truck_arrival_at_fast(
     return tls[truck_id].arrival[(size_t)pos];
 }
 
+// Normalize transformed solutions before evaluation:
+// - remove invalid/empty package assignments
+// - remove empty rendezvous events
+// - remove empty drone trips
+// - rebuild loaded_from_drone marks from normalized queue
+static void normalize_after_transform(const Params &p, Solution &sol) {
+    const int n = (int)p.customers.size();
+    for (auto &trip : sol.drone_queue) {
+        std::vector<ResupplyEvent> kept_events;
+        kept_events.reserve(trip.events.size());
+        for (auto &ev : trip.events) {
+            std::vector<int> pk;
+            pk.reserve(ev.packages.size());
+            for (int x : ev.packages) {
+                if (x > 0 && x < n) pk.push_back(x);
+            }
+            if (pk.empty()) continue;
+            ev.packages.swap(pk);
+            kept_events.push_back(std::move(ev));
+        }
+        trip.events.swap(kept_events);
+    }
+    std::vector<DroneTrip> kept_trips;
+    kept_trips.reserve(sol.drone_queue.size());
+    for (auto &trip : sol.drone_queue) {
+        if (!trip.events.empty()) kept_trips.push_back(std::move(trip));
+    }
+    sol.drone_queue.swap(kept_trips);
+    rebuild_loaded_from_drone_marks(p, sol);
+}
+
 // Synchronized fitness: simulate trucks and drones together (queue order for drones).
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out, double *truck_imbalance_out) {
+    Solution normalized = sol;
+    normalize_after_transform(p, normalized);
     // Always gate objective evaluation by full feasibility.
     std::string reason;
-    if (!validate_solution(p, sol, reason)) {
+    if (!validate_solution(p, normalized, reason)) {
         return {false, std::numeric_limits<double>::infinity()};
     }
-    return fitness_full_no_validate(p, sol, truck_sum_out, truck_imbalance_out);
+    return fitness_full_no_validate(p, normalized, truck_sum_out, truck_imbalance_out);
 }
 
 // Synchronized fitness: simulate trucks and drones together (queue order for drones),
@@ -2381,13 +2416,16 @@ static std::pair<bool,double> fitness_full_no_validate(
     double *truck_sum_out,
     double *truck_imbalance_out
 ) {
+    Solution normalized = sol;
+    normalize_after_transform(p, normalized);
+    const Solution &s_eval = normalized;
     ScopedTimer _t(&g_prof.fitness_sec, g_prof.enabled);
     if (g_prof.enabled) g_prof.fitness_calls++;
     int K = p.n_truck;
     const int n = (int)p.customers.size();
     // mark packages resupplied by drones
     std::vector<char> is_resupplied(n, 0);
-    for (const auto &trip : sol.drone_queue)
+    for (const auto &trip : s_eval.drone_queue)
         for (const auto &ev : trip.events)
             for (auto pk : ev.packages) if (pk >= 0 && pk < n) is_resupplied[pk] = 1;
 
@@ -2398,7 +2436,7 @@ static std::pair<bool,double> fitness_full_no_validate(
     std::vector<std::vector<int>> route_pos(K, std::vector<int>(n, -1));
     for (int k = 0; k < K; ++k) {
         int pos = 0;
-        for (const auto &st : sol.trucks[k].stops) {
+        for (const auto &st : s_eval.trucks[k].stops) {
             stops_cust[k].push_back(st.customer);
             if (st.customer >=0 && st.customer < n) route_pos[k][st.customer] = pos;
             ++pos;
@@ -2437,7 +2475,7 @@ static std::pair<bool,double> fitness_full_no_validate(
     for (int d = 0; d < p.n_drone; ++d) dq.push({0.0, d});
     double max_drone_finish = 0.0;
 
-    for (const auto &trip : sol.drone_queue) {
+    for (const auto &trip : s_eval.drone_queue) {
         if (trip.events.empty()) continue;
         auto [avail, drone_id] = dq.top(); dq.pop();
 
@@ -2665,6 +2703,16 @@ static std::pair<double,double> drone_wait_metrics(const Params &p, const Soluti
         }
     }
     return {mx, sum};
+}
+
+static double total_drone_trip_time(const Params &p, const Solution &sol) {
+    // Sum over all trips: (return_depot - depart_depot).
+    auto sim = simulate_with_log(p, sol);
+    double total = 0.0;
+    for (const auto &trip : sim.drone_rows) {
+        total += (trip.return_depot - trip.depart_depot);
+    }
+    return total;
 }
 
 // Compatibility wrapper: returns +inf if invalid; optionally returns validity flag.
@@ -4331,6 +4379,7 @@ int main(int argc, char** argv){
         int trip_cnt2 = 0;
         int leg_cnt = 0;
         compute_validate_wait_stats(p, sol, avg_sortie_time, avg_truck_wait, avg_drone_wait, trip_cnt2, leg_cnt);
+        const double total_trip_time = total_drone_trip_time(p, sol);
         std::cout.setf(std::ios::fixed);
         std::cout << std::setprecision(12);
         std::cout << "[VALIDATE] OK makespan " << res.second
@@ -4344,6 +4393,7 @@ int main(int argc, char** argv){
                   << " sigma " << p.sigma
                   << "\n";
         std::cout << "[VALIDATE_WAITS] OK avg_sortie_time " << avg_sortie_time
+                  << " total_sortie_time " << total_trip_time
                   << " avg_truck_wait " << avg_truck_wait
                   << " avg_drone_wait " << avg_drone_wait
                   << " trips " << trip_cnt2
@@ -4595,6 +4645,9 @@ int main(int argc, char** argv){
 
     std::cout << "[SOL] best solution detail:\n";
     print_solution_compact(std::cout, sol, p);
+    std::cout.setf(std::ios::fixed);
+    std::cout << std::setprecision(12);
+    std::cout << "[SOL] best total_drone_trip_time: " << total_drone_trip_time(p, sol) << "\n";
 
     std::string best_path = write_solution_json(sol, p, "best");
     if (!best_path.empty()) {
@@ -4607,6 +4660,7 @@ int main(int argc, char** argv){
         std::cout.setf(std::ios::fixed);
         std::cout << std::setprecision(12);
         std::cout << "[SOL] best multi-visit makespan: " << fitness_full(p, g_best_multi_solution).second << "\n";
+        std::cout << "[SOL] best multi-visit total_drone_trip_time: " << total_drone_trip_time(p, g_best_multi_solution) << "\n";
         std::cout << "[SOL] best multi-visit solution detail:\n";
         print_solution_compact(std::cout, g_best_multi_solution, p);
         std::string best_multi_path = write_solution_json(g_best_multi_solution, p, "best_multi");

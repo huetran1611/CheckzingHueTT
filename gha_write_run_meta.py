@@ -5,24 +5,36 @@ import json
 import math
 import pathlib
 import re
+import re as _re
 
 FIT_RE = re.compile(r'(?:Fitness_full \(makespan\)|Objective \(full\) makespan|Makespan:)\s*[: ]\s*([0-9]+(?:\.[0-9]+)?)')
 MV_RE = re.compile(r'best multi-visit makespan:\s*([0-9]+(?:\.[0-9]+)?)', flags=re.IGNORECASE)
 BEST_SOL_RE = re.compile(r'\[SOL\]\s+best solution file:\s*(.+)')
 BEST_MULTI_SOL_RE = re.compile(r'\[SOL\]\s+best multi-visit solution file:\s*(.+)')
+BEST_TOTAL_TRIP_TIME_RE = re.compile(r'\[SOL\]\s+best total_drone_trip_time:\s*([0-9]+(?:\.[0-9]+)?)', flags=re.IGNORECASE)
+BEST_MULTI_TOTAL_TRIP_TIME_RE = re.compile(r'\[SOL\]\s+best multi-visit total_drone_trip_time:\s*([0-9]+(?:\.[0-9]+)?)', flags=re.IGNORECASE)
 
 
 def extract_metrics(log_path: pathlib.Path):
     if not log_path.exists():
-        return None, None, None, None
+        return None, None, None, None, None, None
     txt = log_path.read_text(encoding='utf-8', errors='ignore')
     vals = [float(x) for x in FIT_RE.findall(txt)]
     mv_vals = [float(x) for x in MV_RE.findall(txt)]
+    total_vals = [float(x) for x in BEST_TOTAL_TRIP_TIME_RE.findall(txt)]
+    multi_total_vals = [float(x) for x in BEST_MULTI_TOTAL_TRIP_TIME_RE.findall(txt)]
     best_sol_match = BEST_SOL_RE.findall(txt)
     best_multi_sol_match = BEST_MULTI_SOL_RE.findall(txt)
     best_sol = best_sol_match[-1].strip() if best_sol_match else None
     best_multi_sol = best_multi_sol_match[-1].strip() if best_multi_sol_match else None
-    return (min(vals) if vals else None, min(mv_vals) if mv_vals else None, best_sol, best_multi_sol)
+    return (
+        min(vals) if vals else None,
+        min(mv_vals) if mv_vals else None,
+        best_sol,
+        best_multi_sol,
+        total_vals[-1] if total_vals else None,
+        multi_total_vals[-1] if multi_total_vals else None,
+    )
 
 
 def tokenize(line: str):
@@ -114,8 +126,12 @@ def read_solution_payload(sol_path: str):
     if pos < 0:
         return None
     payload = txt[pos + 1:].strip()
-    # keep exactly the list expression so summary is self-contained
-    return payload
+    # Normalize to a single-line compact payload so CSV cells are one-line.
+    try:
+        data = ast.literal_eval(payload)
+        return json.dumps(data, separators=(',', ':'))
+    except Exception:
+        return _re.sub(r'\s+', ' ', payload).strip()
 
 
 def compute_solution_stats(solution, instance):
@@ -125,6 +141,7 @@ def compute_solution_stats(solution, instance):
             'multi_visit_trip_count': None,
             'drone_trip_count': None,
             'avg_customers_per_trip': None,
+            'total_drone_trip_time': None,
         }
 
     trucks_raw, drone_raw = solution
@@ -227,6 +244,7 @@ def compute_solution_stats(solution, instance):
         durations.append(dur)
 
     trip_count = len(drone_trips)
+    total_duration = sum(durations) if trip_count > 0 else 0.0
     avg_duration = (sum(durations) / trip_count) if trip_count > 0 else 0.0
     avg_customers = (sum(customers_per_trip) / trip_count) if trip_count > 0 else 0.0
     return {
@@ -234,6 +252,7 @@ def compute_solution_stats(solution, instance):
         'multi_visit_trip_count': multi_visit_count,
         'drone_trip_count': trip_count,
         'avg_customers_per_trip': avg_customers,
+        'total_drone_trip_time': total_duration,
     }
 
 
@@ -253,7 +272,7 @@ def main():
     for idx in range(1, args.reps + 1):
         log_name = f"{args.base}_A{int(args.a) if args.a.is_integer() else args.a}_L{int(args.l) if args.l.is_integer() else args.l}_r{idx}.log"
         log_path = results_dir / log_name
-        best_fit, best_mv, best_sol_path, best_multi_sol_path = extract_metrics(log_path)
+        best_fit, best_mv, best_sol_path, best_multi_sol_path, best_total_trip_time_log, best_multi_total_trip_time_log = extract_metrics(log_path)
         best_sol_payload = read_solution_payload(best_sol_path)
         best_multi_payload = read_solution_payload(best_multi_sol_path)
         best_stats = compute_solution_stats(parse_solution_file(best_sol_path), instance)
@@ -271,10 +290,12 @@ def main():
             'best_solution_file': best_sol_path,
             'best_multi_solution_file': best_multi_sol_path,
             'best_drone_avg_trip_time': best_stats['drone_avg_trip_time'],
+            'best_total_sortie_time': best_total_trip_time_log if best_total_trip_time_log is not None else best_stats['total_drone_trip_time'],
             'best_multi_visit_trip_count': best_stats['multi_visit_trip_count'],
             'best_drone_trip_count': best_stats['drone_trip_count'],
             'best_avg_customers_per_trip': best_stats['avg_customers_per_trip'],
             'best_multi_drone_avg_trip_time': best_multi_stats['drone_avg_trip_time'],
+            'best_multi_total_sortie_time': best_multi_total_trip_time_log if best_multi_total_trip_time_log is not None else best_multi_stats['total_drone_trip_time'],
             'best_multi_multi_visit_trip_count': best_multi_stats['multi_visit_trip_count'],
             'best_multi_drone_trip_count': best_multi_stats['drone_trip_count'],
             'best_multi_avg_customers_per_trip': best_multi_stats['avg_customers_per_trip'],

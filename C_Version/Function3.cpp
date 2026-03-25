@@ -202,6 +202,7 @@ static bool trip_endurance_ok(const Params &p, const Solution &s, const std::vec
 static int trip_load(const Params &p, const DroneTrip &trip);
 static int find_insert_pos_queue(const Params &p, const Solution &s, const DroneTrip &cand);
 static bool trip_endurance_optimistic(const Params &p, const Solution &s, const DroneTrip &trip);
+static void normalize_after_transform(const Params &p, Solution &sol);
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out = nullptr);
 static double fitness(const Params &p, const Solution &sol, bool *valid_out);
 static bool relocate_sync_point_first_improve(const Params &p, Solution &s);
@@ -2356,13 +2357,47 @@ static double truck_arrival_at(const Solution &sol, const std::vector<TruckTimel
     return tls[truck_id].arrival[idx];
 }
 
+// Normalize transformed solutions before evaluation:
+// - remove invalid/empty package assignments
+// - remove empty rendezvous events
+// - remove empty drone trips
+// - rebuild loaded_from_drone marks from normalized queue
+static void normalize_after_transform(const Params &p, Solution &sol) {
+    const int n = (int)p.customers.size();
+    for (auto &trip : sol.drone_queue) {
+        std::vector<ResupplyEvent> kept_events;
+        kept_events.reserve(trip.events.size());
+        for (auto &ev : trip.events) {
+            std::vector<int> pk;
+            pk.reserve(ev.packages.size());
+            for (int x : ev.packages) {
+                if (x > 0 && x < n) pk.push_back(x);
+            }
+            if (pk.empty()) continue;
+            ev.packages.swap(pk);
+            kept_events.push_back(std::move(ev));
+        }
+        trip.events.swap(kept_events);
+    }
+    std::vector<DroneTrip> kept_trips;
+    kept_trips.reserve(sol.drone_queue.size());
+    for (auto &trip : sol.drone_queue) {
+        if (!trip.events.empty()) kept_trips.push_back(std::move(trip));
+    }
+    sol.drone_queue.swap(kept_trips);
+    rebuild_loaded_from_drone_marks(p, sol);
+}
+
 // Synchronized fitness: simulate trucks and drones together (queue order for drones).
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out) {
+    Solution normalized = sol;
+    normalize_after_transform(p, normalized);
+    const Solution &s_eval = normalized;
     ScopedTimer _t(&g_prof.fitness_sec, g_prof.enabled);
     if (g_prof.enabled) g_prof.fitness_calls++;
     // Always gate objective evaluation by full feasibility.
     std::string reason;
-    if (!validate_solution(p, sol, reason)) {
+    if (!validate_solution(p, s_eval, reason)) {
         return {false, std::numeric_limits<double>::infinity()};
     }
 
@@ -2370,7 +2405,7 @@ static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol,
     const int n = (int)p.customers.size();
     // mark packages resupplied by drones
     std::vector<char> is_resupplied(n, 0);
-    for (const auto &trip : sol.drone_queue)
+    for (const auto &trip : s_eval.drone_queue)
         for (const auto &ev : trip.events)
             for (auto pk : ev.packages) if (pk >= 0 && pk < n) is_resupplied[pk] = 1;
 
@@ -2381,7 +2416,7 @@ static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol,
     std::vector<std::vector<int>> route_pos(K, std::vector<int>(n, -1));
     for (int k = 0; k < K; ++k) {
         int pos = 0;
-        for (const auto &st : sol.trucks[k].stops) {
+        for (const auto &st : s_eval.trucks[k].stops) {
             stops_cust[k].push_back(st.customer);
             if (st.customer >=0 && st.customer < n) route_pos[k][st.customer] = pos;
             ++pos;
@@ -2420,7 +2455,7 @@ static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol,
     for (int d = 0; d < p.n_drone; ++d) dq.push({0.0, d});
     double max_drone_finish = 0.0;
 
-    for (const auto &trip : sol.drone_queue) {
+    for (const auto &trip : s_eval.drone_queue) {
         if (trip.events.empty()) continue;
         auto [avail, drone_id] = dq.top(); dq.pop();
 
