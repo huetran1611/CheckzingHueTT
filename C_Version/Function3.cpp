@@ -1199,8 +1199,8 @@ static Solution diversify_solution(const Params &p, const Solution &s, std::mt19
 }
 
 static void ats_full(const Params &p, Solution &s, int SEG = 4, double theta = 2.0, int DIV = 3) {
-    // Keep caller-provided SEG/DIV; scale NIMP mildly with instance size.
-    int NIMP = std::max(20, (int)std::round(0.4 * (double)p.customers.size()));
+    // Keep caller-provided SEG/DIV; use fixed NIMP per request.
+    int NIMP = 50;
     const int ats_max_iters = env_int("ATS_MAX_ITERS", -1); // cap total ATS iterations (inner-loop iterations)
     int ats_iter_total = 0;
     const int neigh_count = 4; // truck neighborhoods only: 1-0, 1-1, 2-1, 2-opt
@@ -4003,6 +4003,14 @@ static void read_instance(const string &path, Params &p){
     recompute_drone_reachability(p);
 }
 
+static void read_data_fix_demand_equal1(const string &path, Params &p){
+    // Keep the exact same parser/format handling, then override customer demands.
+    read_instance(path, p);
+    for (size_t i = 1; i < p.customers.size(); ++i) {
+        p.customers[i].demand = 1;
+    }
+}
+
 int main(int argc, char** argv){
     try {
         g_solve_start = std::chrono::steady_clock::now();
@@ -4021,7 +4029,19 @@ int main(int argc, char** argv){
             return 1;
         }
         string path = argv[1];
-        Params p; read_instance(path, p);
+        Params p;
+        bool fix_demand_equal1 = false;
+        if (const char *v = std::getenv("FIX_DEMAND_EQUAL1")) {
+            if (*v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T')) {
+                fix_demand_equal1 = true;
+            }
+        }
+        if (fix_demand_equal1) {
+            read_data_fix_demand_equal1(path, p);
+            std::cout << "[CFG] FIX_DEMAND_EQUAL1 enabled (all customer demands set to 1)\n";
+        } else {
+            read_instance(path, p);
+        }
         if (argc >= 3) p.M_d = stod(argv[2]);
         if (argc >= 4) p.L_d = stod(argv[3]);
         // Need to refresh reachability if L_d is overridden by CLI.
