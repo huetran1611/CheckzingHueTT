@@ -79,29 +79,17 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
     # BREAKLOOP = Data.number_of_cities
 
     END_SEGMENT =  int(Data.number_of_cities/math.log10(Data.number_of_cities)) * theta
+    MAX_NO_IMPROVE_SEGMENTS = 12
     END = 0
     T = 0
     Best_T = 0
+    tabu_iterations = 0
     nei_set = [0, 1, 2, 3]
     weight = [1/len(nei_set)]*len(nei_set)
     current_sol = init_solution
     data_to_write = {}
-    COUNT = 0
-    while COUNT < 3:
-        print("+++++++++++++++", COUNT, "+++++++++++++++")
-        if T > 3:
-            COUNT += 1
-            T = 0
-            current_neighborhood5, solution_pack1 = Neighborhood.swap_two_array(current_sol)
-            best_sol_in_brnei = current_neighborhood5[0][0]
-            best_fitness_in_brnei = current_neighborhood5[0][1][0]
-            for i in range(1, len(current_neighborhood5)):
-                cfnode = current_neighborhood5[i][1][0]
-                if cfnode - best_fitness_in_brnei < epsilon:
-                    best_sol_in_brnei = current_neighborhood5[i][0]
-                    best_fitness_in_brnei = cfnode
-            
-            current_sol = best_sol_in_brnei
+    while T < MAX_NO_IMPROVE_SEGMENTS:
+        print("+++++++++++++++ segment", END, "+++++++++++++++")
 
         end_time = time.time()
         if end_time - start_time > TIME_LIMIT:
@@ -113,7 +101,9 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
                 "weight": weight,
                 "Done": False,
                 "Best_T": Best_T,
-                "END": END
+                "END": END,
+                "segments_done": END,
+                "tabu_iterations": tabu_iterations
             }
             # Write data as a JSON string
             # file.write(json.dumps(data_to_write) + "\n")
@@ -134,6 +124,7 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
         lenght_i = [0] * 6
         i = 0
         while i < END_SEGMENT:
+            tabu_iterations += 1
             current_neighborhood = []
             prev_fitness = current_fitness
             choose = roulette_wheel_selection(nei_set, weight)
@@ -379,7 +370,9 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
             "best_fitness": best_fitness,
             "best_sol": best_sol,
             "Best_T": Best_T,
-            "END": END
+            "END": END,
+            "segments_done": END,
+            "tabu_iterations": tabu_iterations
         }
         
     return best_sol, best_fitness, Result_print, solution_pack, data_to_write
@@ -495,6 +488,8 @@ for txt_file in txt_files:
             print("---------- RESULT ----------")
             print(best_sol)
             print(best_fitness)
+            print("tabu_iterations:", data_to_write["tabu_iterations"])
+            print("segments_done:", data_to_write["segments_done"])
             avg += best_fitness/ITE
             result.append(best_fitness)
             # print(Function.Check_if_feasible(best_sol))
@@ -513,5 +508,7 @@ for txt_file in txt_files:
                 sheet.cell(row=row, column=column+1, value=str(best_csv_sol))
             sheet.cell(row=row, column=column+2, value=data_to_write["Best_T"])
             sheet.cell(row=row, column=column+3, value=data_to_write["END"])
+            sheet.cell(row=row, column=column+4, value=data_to_write["tabu_iterations"])
+            sheet.cell(row=row, column=column+5, value=data_to_write["segments_done"])
             workbook.save(f"Random_{number_of_cities}_{data_set}_{SEGMENT}_iter-_{ite}_CL2.xlsx")
             workbook.close()

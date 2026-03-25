@@ -53,33 +53,12 @@ def roulette_wheel_selection(population, fitness_scores):
     selected_index = np.random.choice(len(population), p=probabilities)
     return population[selected_index]
 
-def diversify_by_reversing_truck_route(solution):
-    # Diversification: reverse one truck route (except depot) and pick the best candidate.
-    best_candidate = None
-    best_candidate_fitness = float("inf")
-    best_candidate_truck_time = None
-    best_candidate_sum_fitness = None
-
-    for truck_index in range(Data.number_of_trucks):
-        if len(solution[0][truck_index]) <= 2:
-            continue
-        candidate_solution = Neighborhood.Reverse_truck_route(solution, truck_index)
-        candidate_fitness, candidate_truck_time, candidate_sum_fitness = Function.fitness(candidate_solution)
-        if candidate_fitness < best_candidate_fitness:
-            best_candidate = candidate_solution
-            best_candidate_fitness = candidate_fitness
-            best_candidate_truck_time = candidate_truck_time
-            best_candidate_sum_fitness = candidate_sum_fitness
-
-    if best_candidate is None:
-        current_fitness, current_truck_time, current_sum_fitness = Function.fitness(solution)
-        return copy.deepcopy(solution), current_fitness, current_truck_time, current_sum_fitness
-
-    return best_candidate, best_candidate_fitness, best_candidate_truck_time, best_candidate_sum_fitness
-
 def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_consider_elite_set, start_time):
     segment_no_improve = 0
     diversification_count = 0
+    final_search_after_last_div_pending = False
+    before_last_div_tabu_iterations = None
+    before_last_div_segments = None
     solution_pack = []
 
     current_fitness, current_truck_time, current_sum_fitness = Function.fitness(init_solution)
@@ -110,6 +89,7 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
     END = 0
     T = 0
     Best_T = 0
+    tabu_iterations = 0
     nei_set = [0, 1, 2, 3]
     weight = [1/len(nei_set)]*len(nei_set)
     current_sol = init_solution
@@ -119,6 +99,11 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
 
         end_time = time.time()
         if end_time - start_time > TIME_LIMIT:
+            after_last_div_tabu_iterations = None
+            after_last_div_segments = None
+            if before_last_div_tabu_iterations is not None:
+                after_last_div_tabu_iterations = tabu_iterations - before_last_div_tabu_iterations
+                after_last_div_segments = END - before_last_div_segments
             # Prepare the data as a dictionary
             data_to_write = {
                 "best_sol": best_sol,
@@ -127,7 +112,14 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
                 "weight": weight,
                 "Done": False,
                 "Best_T": Best_T,
-                "END": END
+                "END": END,
+                "segments_done": END,
+                "tabu_iterations": tabu_iterations,
+                "diversification_count": diversification_count,
+                "before_last_div_tabu_iterations": before_last_div_tabu_iterations,
+                "before_last_div_segments": before_last_div_segments,
+                "after_last_div_tabu_iterations": after_last_div_tabu_iterations,
+                "after_last_div_segments": after_last_div_segments
             }
             # Write data as a JSON string
             # file.write(json.dumps(data_to_write) + "\n")
@@ -148,6 +140,7 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
         lenght_i = [0] * 6
         i = 0
         while i < END_SEGMENT:
+            tabu_iterations += 1
             current_neighborhood = []
             prev_fitness = current_fitness
             choose = roulette_wheel_selection(nei_set, weight)
@@ -391,39 +384,79 @@ def Tabu_search(init_solution, tabu_tenure, CC, first_time, Data1, index_conside
 
         END += 1
 
-        if segment_no_improve >= NO_IMPROVE_SEGMENTS_FOR_DIVERSIFICATION:
-            if diversification_count >= MAX_DIVERSIFICATION:
-                print("Reached max diversification. Stop tabu search.")
-                data_to_write = {
-                    "Done": True,
-                    "best_fitness": best_fitness,
-                    "best_sol": best_sol,
-                    "Best_T": Best_T,
-                    "END": END,
-                    "diversification_count": diversification_count
-                }
-                break
+        # After the 3rd diversification, run exactly one more search segment and stop.
+        if final_search_after_last_div_pending:
+            after_last_div_tabu_iterations = tabu_iterations - before_last_div_tabu_iterations
+            after_last_div_segments = END - before_last_div_segments
+            print("Reached final post-diversification search. Stop tabu search.")
+            print("Before last diversification - tabu_iterations:", before_last_div_tabu_iterations, "segments:", before_last_div_segments)
+            print("After last diversification  - tabu_iterations:", after_last_div_tabu_iterations, "segments:", after_last_div_segments)
+            data_to_write = {
+                "Done": True,
+                "best_fitness": best_fitness,
+                "best_sol": best_sol,
+                "Best_T": Best_T,
+                "END": END,
+                "segments_done": END,
+                "tabu_iterations": tabu_iterations,
+                "diversification_count": diversification_count,
+                "before_last_div_tabu_iterations": before_last_div_tabu_iterations,
+                "before_last_div_segments": before_last_div_segments,
+                "after_last_div_tabu_iterations": after_last_div_tabu_iterations,
+                "after_last_div_segments": after_last_div_segments
+            }
+            break
 
+        if segment_no_improve >= NO_IMPROVE_SEGMENTS_FOR_DIVERSIFICATION:
             diversification_count += 1
-            print(f"Diversification #{diversification_count}: reverse truck route")
-            current_sol, current_fitness, current_truck_time, current_sum_fitness = diversify_by_reversing_truck_route(current_sol)
+            if diversification_count == MAX_DIVERSIFICATION:
+                before_last_div_tabu_iterations = tabu_iterations
+                before_last_div_segments = END
+
+            print(f"Diversification #{diversification_count}: swap_two_array")
+            current_neighborhood5, solution_pack1 = Neighborhood.swap_two_array(current_sol)
+            best_sol_in_brnei = current_neighborhood5[0][0]
+            best_fitness_in_brnei = current_neighborhood5[0][1][0]
+            for i in range(1, len(current_neighborhood5)):
+                cfnode = current_neighborhood5[i][1][0]
+                if cfnode - best_fitness_in_brnei < epsilon:
+                    best_sol_in_brnei = current_neighborhood5[i][0]
+                    best_fitness_in_brnei = cfnode
+            current_sol = best_sol_in_brnei
+            current_fitness, current_truck_time, current_sum_fitness = Function.fitness(current_sol)
             fit_of_sol_chosen_to_break = current_fitness
             segment_no_improve = 0
+            T = 0
+            # Refresh adaptive neighborhood scores/weights after diversification.
+            weight = [1/len(nei_set)]*len(nei_set)
 
             if current_fitness - best_fitness < epsilon:
                 best_fitness = current_fitness
                 best_sol = current_sol
                 Best_T = END
-                T = 0
+
+            if diversification_count == MAX_DIVERSIFICATION:
+                final_search_after_last_div_pending = True
 
     if data_to_write == {}:
+        after_last_div_tabu_iterations = None
+        after_last_div_segments = None
+        if before_last_div_tabu_iterations is not None:
+            after_last_div_tabu_iterations = tabu_iterations - before_last_div_tabu_iterations
+            after_last_div_segments = END - before_last_div_segments
         data_to_write = {
             "Done": True,
             "best_fitness": best_fitness,
             "best_sol": best_sol,
             "Best_T": Best_T,
             "END": END,
-            "diversification_count": diversification_count
+            "segments_done": END,
+            "tabu_iterations": tabu_iterations,
+            "diversification_count": diversification_count,
+            "before_last_div_tabu_iterations": before_last_div_tabu_iterations,
+            "before_last_div_segments": before_last_div_segments,
+            "after_last_div_tabu_iterations": after_last_div_tabu_iterations,
+            "after_last_div_segments": after_last_div_segments
         }
         
     return best_sol, best_fitness, Result_print, solution_pack, data_to_write
@@ -539,6 +572,10 @@ for txt_file in txt_files:
             print("---------- RESULT ----------")
             print(best_sol)
             print(best_fitness)
+            print("tabu_iterations:", data_to_write["tabu_iterations"])
+            print("segments_done:", data_to_write["segments_done"])
+            print("before_last_div - tabu_iterations:", data_to_write["before_last_div_tabu_iterations"], "segments:", data_to_write["before_last_div_segments"])
+            print("after_last_div  - tabu_iterations:", data_to_write["after_last_div_tabu_iterations"], "segments:", data_to_write["after_last_div_segments"])
             avg += best_fitness/ITE
             result.append(best_fitness)
             # print(Function.Check_if_feasible(best_sol))
@@ -557,5 +594,11 @@ for txt_file in txt_files:
                 sheet.cell(row=row, column=column+1, value=str(best_csv_sol))
             sheet.cell(row=row, column=column+2, value=data_to_write["Best_T"])
             sheet.cell(row=row, column=column+3, value=data_to_write["END"])
+            sheet.cell(row=row, column=column+4, value=data_to_write["tabu_iterations"])
+            sheet.cell(row=row, column=column+5, value=data_to_write["segments_done"])
+            sheet.cell(row=row, column=column+6, value=data_to_write["before_last_div_tabu_iterations"])
+            sheet.cell(row=row, column=column+7, value=data_to_write["before_last_div_segments"])
+            sheet.cell(row=row, column=column+8, value=data_to_write["after_last_div_tabu_iterations"])
+            sheet.cell(row=row, column=column+9, value=data_to_write["after_last_div_segments"])
             workbook.save(f"Random_{number_of_cities}_{data_set}_{SEGMENT}_iter-_{ite}_CL2.xlsx")
             workbook.close()
