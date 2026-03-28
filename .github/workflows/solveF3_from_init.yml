@@ -23,7 +23,7 @@ on:
       instance_folder:
         description: "Folder containing .dat instances"
         required: true
-        default: "test_data/data_demand_random_50_batch_all1_equal_random"
+        default: "test_data/data_demand_random_50_batch_all1_equal_cluster"
       reps:
         description: "Repetitions per instance"
         required: true
