@@ -29,7 +29,7 @@ on:
         required: true
         default: "3"
       seed_xlsx:
-        description: "Excel file containing best_solution seeds"
+        description: "Excel file containing best_multi_solution / best_solution seeds"
         required: true
         default: "result/Question4,14/50_batch_best_demand1.xlsx"
       seed_sheet:
@@ -49,8 +49,8 @@ jobs:
         id: make-matrix
         env:
           INSTANCE_FOLDER: ${{ github.event.inputs.instance_folder || 'test_data/data_demand_random_50_batch_all1_equal_random' }}
-          A_VAL: ${{ github.event.inputs.a || '4' }}
-          L_VAL: ${{ github.event.inputs.l || '120' }}
+          A_VAL: ${{ github.event.inputs.a || '4,8' }}
+          L_VAL: ${{ github.event.inputs.l || '60,90,120' }}
           REPS: ${{ github.event.inputs.reps || '3' }}
           TRUCK_COUNT: ${{ github.event.inputs.truck_count || '2' }}
           DRONE_COUNT: ${{ github.event.inputs.drone_count || '1' }}

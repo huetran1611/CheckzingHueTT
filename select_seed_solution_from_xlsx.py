@@ -56,6 +56,13 @@ def _row_best_fitness(row: Tuple[Any, ...], col: Dict[str, int]) -> float:
     return f if f is not None else float("inf")
 
 
+def _row_best_multi_fitness(row: Tuple[Any, ...], col: Dict[str, int]) -> float:
+    if "best_multi_fitness" not in col:
+        return float("inf")
+    f = _to_float(row[col["best_multi_fitness"]])
+    return f if f is not None else float("inf")
+
+
 def _match_instance(excel_instance: str, target_instance: str) -> bool:
     a = _norm_instance(excel_instance)
     b = _norm_instance(target_instance)
@@ -66,7 +73,10 @@ def _match_instance(excel_instance: str, target_instance: str) -> bool:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Select best_solution from xlsx by (instance, A, L) and write seed solution file."
+        description=(
+            "Select seed solution from xlsx by (instance, A, L): "
+            "prefer best_multi_solution, fallback to best_solution."
+        )
     )
     ap.add_argument("--xlsx", required=True, help="Path to xlsx file")
     ap.add_argument("--instance", required=True, help="Instance path to match")
@@ -84,7 +94,13 @@ def main():
     ws = _pick_sheet(wb, args.sheet)
     col, rows = _read_rows(ws)
 
-    candidates: List[Tuple[float, Tuple[Any, ...]]] = []
+    # Candidate tuple:
+    # (
+    #   source_priority,   # 0 = best_multi_solution, 1 = best_solution fallback
+    #   score,             # best_multi_fitness or best_fitness (smaller is better)
+    #   row
+    # )
+    candidates: List[Tuple[int, float, Tuple[Any, ...]]] = []
     for row in rows:
         inst = row[col["instance"]] if col["instance"] < len(row) else None
         if not inst or not _match_instance(str(inst), args.instance):
@@ -93,19 +109,33 @@ def main():
         l = _to_int(row[col["L"]] if col["L"] < len(row) else None)
         if a != args.a or l != args.l:
             continue
-        sol = row[col["best_solution"]] if col["best_solution"] < len(row) else None
-        if not sol or not str(sol).strip():
+
+        multi_sol = None
+        if "best_multi_solution" in col and col["best_multi_solution"] < len(row):
+            multi_sol = row[col["best_multi_solution"]]
+        if multi_sol and str(multi_sol).strip():
+            candidates.append((0, _row_best_multi_fitness(row, col), row))
             continue
-        candidates.append((_row_best_fitness(row, col), row))
+
+        sol = row[col["best_solution"]] if col["best_solution"] < len(row) else None
+        if sol and str(sol).strip():
+            candidates.append((1, _row_best_fitness(row, col), row))
 
     if not candidates:
         raise RuntimeError(
-            f"No best_solution found for instance={args.instance}, A={args.a}, L={args.l} in {xlsx_path}"
+            "No usable seed solution found "
+            f"(best_multi_solution/best_solution) for "
+            f"instance={args.instance}, A={args.a}, L={args.l} in {xlsx_path}"
         )
 
-    candidates.sort(key=lambda x: x[0])
-    best_row = candidates[0][1]
-    best_sol = str(best_row[col["best_solution"]]).strip()
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    source_priority, score, best_row = candidates[0]
+    if source_priority == 0:
+        best_sol = str(best_row[col["best_multi_solution"]]).strip()
+        source = "best_multi_solution"
+    else:
+        best_sol = str(best_row[col["best_solution"]]).strip()
+        source = "best_solution"
 
     seed_path = pathlib.Path(args.seed_out)
     seed_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,10 +144,9 @@ def main():
     print(
         "[SEED_PICK] "
         f"instance={args.instance} A={args.a} L={args.l} "
-        f"fitness={candidates[0][0]} seed={seed_path}"
+        f"source={source} fitness={score} seed={seed_path}"
     )
 
 
 if __name__ == "__main__":
     main()
-
