@@ -48,7 +48,7 @@ jobs:
       - name: Build matrix from folder + input parameters
         id: make-matrix
         env:
-          INSTANCE_FOLDER: ${{ github.event.inputs.instance_folder || 'test_data/data_demand_random_50_batch_all1_equal_random' }}
+          INSTANCE_FOLDER: ${{ github.event.inputs.instance_folder || 'test_data/data_demand_random_50_batch_all1_equal_cluster' }}
           A_VAL: ${{ github.event.inputs.a || '[4,8]' }}
           L_VAL: ${{ github.event.inputs.l || '[60,90,120]' }}
           REPS: ${{ github.event.inputs.reps || '3' }}
