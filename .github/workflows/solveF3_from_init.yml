@@ -1,6 +1,7 @@
 name: Solve F3 From Excel Seeds
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       truck_count:
@@ -47,12 +48,12 @@ jobs:
       - name: Build matrix from folder + input parameters
         id: make-matrix
         env:
-          INSTANCE_FOLDER: ${{ inputs.instance_folder }}
-          A_VAL: ${{ inputs.a }}
-          L_VAL: ${{ inputs.l }}
-          REPS: ${{ inputs.reps }}
-          TRUCK_COUNT: ${{ inputs.truck_count }}
-          DRONE_COUNT: ${{ inputs.drone_count }}
+          INSTANCE_FOLDER: ${{ github.event.inputs.instance_folder || 'test_data/data_demand_random_50_batch_all1_equal_random' }}
+          A_VAL: ${{ github.event.inputs.a || '4' }}
+          L_VAL: ${{ github.event.inputs.l || '120' }}
+          REPS: ${{ github.event.inputs.reps || '3' }}
+          TRUCK_COUNT: ${{ github.event.inputs.truck_count || '2' }}
+          DRONE_COUNT: ${{ github.event.inputs.drone_count || '1' }}
         run: |
           python - << 'PY'
           import glob, json, os
@@ -106,8 +107,8 @@ jobs:
         run: g++ -std=c++17 C_Version/Function3.cpp -O2 -o C_Version/read_data_f3
       - name: Build seed from Excel and run task
         env:
-          SEED_XLSX: ${{ inputs.seed_xlsx }}
-          SEED_SHEET: ${{ inputs.seed_sheet }}
+          SEED_XLSX: ${{ github.event.inputs.seed_xlsx || 'result/Question4,14/50_batch_best_demand1.xlsx' }}
+          SEED_SHEET: ${{ github.event.inputs.seed_sheet || 'yellow_rows' }}
         run: |
           set -euo pipefail
           mkdir -p results
@@ -154,10 +155,10 @@ jobs:
           path: downloaded
       - name: Build summary
         env:
-          TRUCK_COUNT: ${{ inputs.truck_count }}
-          DRONE_COUNT: ${{ inputs.drone_count }}
-          A_VAL: ${{ inputs.a }}
-          L_VAL: ${{ inputs.l }}
+          TRUCK_COUNT: ${{ github.event.inputs.truck_count || '2' }}
+          DRONE_COUNT: ${{ github.event.inputs.drone_count || '1' }}
+          A_VAL: ${{ github.event.inputs.a || '4' }}
+          L_VAL: ${{ github.event.inputs.l || '120' }}
         run: |
           python - << 'PY'
           import csv
@@ -190,10 +191,10 @@ jobs:
       - name: Recompute summary metrics with Function3
         id: recompute
         env:
-          TRUCK_COUNT: ${{ inputs.truck_count }}
-          DRONE_COUNT: ${{ inputs.drone_count }}
-          A_VAL: ${{ inputs.a }}
-          L_VAL: ${{ inputs.l }}
+          TRUCK_COUNT: ${{ github.event.inputs.truck_count || '2' }}
+          DRONE_COUNT: ${{ github.event.inputs.drone_count || '1' }}
+          A_VAL: ${{ github.event.inputs.a || '4' }}
+          L_VAL: ${{ github.event.inputs.l || '120' }}
         run: |
           set +e
           SUMMARY_FILE="summary_f3_t${TRUCK_COUNT}_d${DRONE_COUNT}_a${A_VAL}_l${L_VAL}.csv"
@@ -209,15 +210,15 @@ jobs:
       - name: Upload summary
         if: always()
         env:
-          TRUCK_COUNT: ${{ inputs.truck_count }}
-          DRONE_COUNT: ${{ inputs.drone_count }}
-          A_VAL: ${{ inputs.a }}
-          L_VAL: ${{ inputs.l }}
+          TRUCK_COUNT: ${{ github.event.inputs.truck_count || '2' }}
+          DRONE_COUNT: ${{ github.event.inputs.drone_count || '1' }}
+          A_VAL: ${{ github.event.inputs.a || '4' }}
+          L_VAL: ${{ github.event.inputs.l || '120' }}
         uses: actions/upload-artifact@v4
         with:
-          name: solvef3-seeded-summary-t${{ inputs.truck_count }}-d${{ inputs.drone_count }}-a${{ inputs.a }}-l${{ inputs.l }}
+          name: solvef3-seeded-summary-t${{ github.event.inputs.truck_count || '2' }}-d${{ github.event.inputs.drone_count || '1' }}-a${{ github.event.inputs.a || '4' }}-l${{ github.event.inputs.l || '120' }}
           path: |
-            summary_f3_t${{ inputs.truck_count }}_d${{ inputs.drone_count }}_a${{ inputs.a }}_l${{ inputs.l }}.csv
+            summary_f3_t${{ github.event.inputs.truck_count || '2' }}_d${{ github.event.inputs.drone_count || '1' }}_a${{ github.event.inputs.a || '4' }}_l${{ github.event.inputs.l || '120' }}.csv
             batch_init_ats_improved_with_multivisit_recompute_failures.csv
       - name: Fail job if recompute has errors
         if: steps.recompute.outputs.rc != '0'
