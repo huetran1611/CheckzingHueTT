@@ -13,13 +13,13 @@ on:
         required: true
         default: "1"
       a:
-        description: "Drone capacity A (single value or comma-separated list, e.g. 4,8)"
+        description: "Drone capacity A (single value, comma list, or JSON array: 4 | 4,8 | [4,8])"
         required: true
-        default: "4"
+        default: "[4,8]"
       l:
-        description: "Drone endurance L (single value or comma-separated list, e.g. 60,90,120)"
+        description: "Drone endurance L (single value, comma list, or JSON array: 120 | 60,90,120 | [60,90,120])"
         required: true
-        default: "120"
+        default: "[60,90,120]"
       instance_folder:
         description: "Folder containing .dat instances"
         required: true
@@ -49,8 +49,8 @@ jobs:
         id: make-matrix
         env:
           INSTANCE_FOLDER: ${{ github.event.inputs.instance_folder || 'test_data/data_demand_random_50_batch_all1_equal_random' }}
-          A_VAL: ${{ github.event.inputs.a || '4' }}
-          L_VAL: ${{ github.event.inputs.l || '120' }}
+          A_VAL: ${{ github.event.inputs.a || '[4,8]' }}
+          L_VAL: ${{ github.event.inputs.l || '[60,90,120]' }}
           REPS: ${{ github.event.inputs.reps || '3' }}
           TRUCK_COUNT: ${{ github.event.inputs.truck_count || '2' }}
           DRONE_COUNT: ${{ github.event.inputs.drone_count || '1' }}
@@ -59,8 +59,19 @@ jobs:
           import glob, json, os
           
           def parse_int_list(raw: str):
+              raw = (raw or "").strip()
+              if not raw:
+                  raise ValueError("Empty integer list input")
+              if raw.startswith("["):
+                  arr = json.loads(raw)
+                  if not isinstance(arr, list):
+                      raise ValueError(f"Expected JSON array but got: {raw!r}")
+                  vals = [int(x) for x in arr]
+                  if not vals:
+                      raise ValueError(f"Empty integer list from input: {raw!r}")
+                  return vals
               vals = []
-              for part in (raw or "").split(","):
+              for part in raw.split(","):
                   s = part.strip()
                   if not s:
                       continue
