@@ -37,7 +37,7 @@ jobs:
       - name: Build row-chunk matrix (3 rows/job)
         id: mk
         env:
-          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || 'result/Question4,14/To_refine_csv_2truck_1drone/50 batch random_2 truck 1 drone.csv' }}
+          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || 'result/Question4,14/To_refine_csv_2truck_1drone/50_random_fix_demand1_2 truck 1 drone.csv' }}
           CHUNK_SIZE_INPUT: ${{ github.event.inputs.chunk_size || '3' }}
           DEFAULT_CSV_FILES: |
             result/Question4,14/To_refine_csv_2truck_1drone/50 batch cluster 2 truck 1 drone.csv
