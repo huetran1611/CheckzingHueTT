@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: "Parallel row jobs (max 3 on GitHub runner)"
+        description: "Parallel row jobs inside each matrix job (max 3)"
         required: false
         default: "3"
       ls_time_limit_sec:
@@ -22,25 +22,65 @@ on:
         default: "1"
 
 jobs:
+  build-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mk.outputs.matrix }}
+      total: ${{ steps.mk.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CSV matrix
+        id: mk
+        run: |
+          python - << 'PY'
+          import json
+          import pathlib
+
+          d = pathlib.Path("result/Question4,14/To_refine_csv_2truck_1drone")
+          files = sorted(p for p in d.glob("*.csv") if p.is_file())
+          if not files:
+              raise SystemExit(f"No input csv files in {d}")
+          matrix = []
+          for i, p in enumerate(files, start=1):
+              matrix.append({
+                  "idx": i,
+                  "csv": str(p),
+                  "name": p.stem.replace(" ", "_")
+              })
+          with open("matrix.json", "w", encoding="utf-8") as f:
+              json.dump(matrix, f)
+          print(json.dumps(matrix))
+          print(f"Total csv jobs: {len(matrix)}")
+          PY
+          echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "total=$(python - << 'PY'
+          import json
+          print(len(json.load(open('matrix.json'))))
+          PY
+          )" >> "$GITHUB_OUTPUT"
+
   refine:
+    needs: build-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Build read_data_f5
-        run: |
-          g++ -std=c++17 -O2 C_Version/Function5.cpp -o C_Version/read_data_f5
+        run: g++ -std=c++17 -O2 C_Version/Function5.cpp -o C_Version/read_data_f5
 
-      - name: Run refine/improve/recompute (2 truck, 1 drone)
+      - name: Run refine/improve/recompute for one CSV
         env:
+          INPUT_CSV: ${{ matrix.task.csv }}
           WORKERS: ${{ github.event.inputs.workers || '3' }}
           LS_TIME_LIMIT_SEC: ${{ github.event.inputs.ls_time_limit_sec || '120' }}
           N_TRUCK: ${{ github.event.inputs.n_truck || '2' }}
@@ -50,20 +90,13 @@ jobs:
             echo "WORKERS=${WORKERS} exceeds runner-safe limit, clamp to 3"
             WORKERS=3
           fi
-          INPUT_DIR="result/Question4,14/To_refine_csv_2truck_1drone"
-          if [ ! -d "$INPUT_DIR" ]; then
-            echo "Missing input directory: $INPUT_DIR"
-            exit 1
-          fi
-
-          mapfile -t INPUTS < <(find "$INPUT_DIR" -maxdepth 1 -type f -name "*.csv" | sort)
-          if [ "${#INPUTS[@]}" -eq 0 ]; then
-            echo "No input CSV files found in $INPUT_DIR"
+          if [ ! -f "$INPUT_CSV" ]; then
+            echo "Missing input CSV: $INPUT_CSV"
             exit 1
           fi
 
           python refine_improve_recompute_batch_f5.py \
-            --inputs "${INPUTS[@]}" \
+            --inputs "$INPUT_CSV" \
             --solver-bin C_Version/read_data_f5 \
             --n-truck "$N_TRUCK" \
             --n-drone "$N_DRONE" \
@@ -73,7 +106,7 @@ jobs:
       - name: Upload refined outputs
         uses: actions/upload-artifact@v4
         with:
-          name: refined-f5-batch
+          name: refined-f5-${{ matrix.task.idx }}-${{ matrix.task.name }}
           path: |
             result/Question4,14/refined_csv_2truck_1drone
             result/Question4,14/ls_outputs_f5_row_jobs
