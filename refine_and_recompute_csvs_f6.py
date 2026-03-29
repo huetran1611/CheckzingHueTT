@@ -9,6 +9,13 @@ import sys
 from typing import Dict
 
 
+def normalized_output_stem(stem: str) -> str:
+    s = (stem or "").strip()
+    if s.endswith("_input"):
+        s = s[: -len("_input")]
+    return s or stem
+
+
 def process_one(
     in_csv: pathlib.Path,
     out_csv: pathlib.Path,
@@ -55,7 +62,7 @@ def main() -> int:
 
     for s in args.inputs:
         in_csv = pathlib.Path(s)
-        out_csv = out_dir / (in_csv.stem + "_refine.csv")
+        out_csv = out_dir / (normalized_output_stem(in_csv.stem) + "_refine.csv")
         print(f"[RUN] {in_csv}")
         rc = process_one(in_csv, out_csv, args.solver_bin, args.workers)
         fail_rep = pathlib.Path("batch_init_ats_improved_with_multivisit_recompute_failures.csv")

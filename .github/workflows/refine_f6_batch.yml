@@ -42,7 +42,7 @@ jobs:
       - name: Build row-chunk matrix (balanced, max 250 jobs)
         id: mk
         env:
-          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || 'result/Question4,14/#/50_fix_demand_all.xlsx' }}
+          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || 'result/Question4,14/#/50_batch_all_valid.xlsx' }}
           MAX_JOBS_INPUT: ${{ github.event.inputs.max_jobs || '250' }}
           DEFAULT_CSV_FILES: |
             result/Question4,14/#/50_batch_all_valid.xlsx
@@ -347,6 +347,12 @@ jobs:
           import pathlib
           from collections import defaultdict
 
+          def normalized_output_stem(stem: str) -> str:
+              s = (stem or "").strip()
+              if s.endswith("_input"):
+                  s = s[: -len("_input")]
+              return s or stem
+
           tasks = json.loads((pathlib.os.environ.get("MATRIX_JSON") or "[]"))
           by_csv = defaultdict(list)
           for t in tasks:
@@ -357,7 +363,7 @@ jobs:
 
           for csv_path, group in by_csv.items():
               group = sorted(group, key=lambda x: int(x["chunk_id"]))
-              csv_stem = group[0]["csv_stem"]
+              csv_stem = normalized_output_stem(group[0]["csv_stem"])
               csv_key = group[0]["csv_key"]
               merged_rows = []
               fieldnames = None

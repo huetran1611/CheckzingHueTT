@@ -2495,9 +2495,7 @@ static void normalize_after_transform(const Params &p, Solution &sol) {
 
 // Synchronized fitness: simulate trucks and drones together (queue order for drones).
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out) {
-    Solution normalized = sol;
-    normalize_after_transform(p, normalized);
-    const Solution &s_eval = normalized;
+    const Solution &s_eval = sol;
     ScopedTimer _t(&g_prof.fitness_sec, g_prof.enabled);
     if (g_prof.enabled) g_prof.fitness_calls++;
     // Always gate objective evaluation by full feasibility.

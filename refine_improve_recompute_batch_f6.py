@@ -454,6 +454,7 @@ def process_row(
     n_drone: int,
     ls_time_limit_sec: int,
     ls_out_root: pathlib.Path,
+    release_cache: Dict[str, List[int]],
 ) -> Tuple[int, Dict[str, str], str]:
     instance = (row.get("instance") or "").strip()
     a = (row.get("A") or "").strip()
@@ -461,11 +462,21 @@ def process_row(
     if not instance:
         return idx, row, "missing instance"
 
+    releases = release_cache.get(instance)
+    if releases is None:
+        releases = read_instance_releases(instance)
+        release_cache[instance] = releases
+
     best_raw = (row.get("best_solution") or "").strip()
     multi_raw = (row.get("best_multi_solution") or "").strip()
-    # No Python-side normalize: keep Function6.cpp as the single source of truth.
-    best_seed = compact_solution_text(best_raw)
-    multi_seed = compact_solution_text(multi_raw)
+    # Refine seeds before LS:
+    # - move release<=0 packages out of drone resupply (truck takes from depot)
+    # - clean invalid/empty drone events/trips
+    best_seed = normalize_solution_text(compact_solution_text(best_raw), releases)
+    multi_seed = normalize_solution_text(compact_solution_text(multi_raw), releases)
+    # Keep only true multi-visit seed in best_multi_solution before local search.
+    if multi_seed and multi_visit_count(multi_seed) <= 0:
+        multi_seed = ""
 
     row["best_solution"] = best_seed
     row["best_multi_solution"] = multi_seed
@@ -698,6 +709,13 @@ def copy_inputs_for_git(inputs: List[pathlib.Path], tracked_dir: pathlib.Path) -
     return copied
 
 
+def normalized_output_stem(stem: str) -> str:
+    s = (stem or "").strip()
+    if s.endswith("_input"):
+        s = s[: -len("_input")]
+    return s or stem
+
+
 def process_file(
     in_csv: pathlib.Path,
     out_csv: pathlib.Path,
@@ -714,6 +732,11 @@ def process_file(
         fieldnames = r.fieldnames or []
 
     fieldnames = ensure_columns(fieldnames, rows)
+    release_cache: Dict[str, List[int]] = {}
+    for row in rows:
+        inst = (row.get("instance") or "").strip()
+        if inst and inst not in release_cache:
+            release_cache[inst] = read_instance_releases(inst)
     results: Dict[int, Tuple[Dict[str, str], str]] = {}
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -727,6 +750,7 @@ def process_file(
                 n_drone,
                 ls_time_limit_sec,
                 ls_out_root,
+                release_cache,
             )
             for idx, row in enumerate(rows)
         ]
@@ -788,7 +812,8 @@ def main() -> int:
     out_dir = pathlib.Path(args.out_dir)
     ls_out_root = pathlib.Path(args.ls_out_dir)
     for in_csv in tracked_inputs:
-        out_csv = out_dir / f"{in_csv.stem}_refine.csv"
+        out_stem = normalized_output_stem(in_csv.stem)
+        out_csv = out_dir / f"{out_stem}_refine.csv"
         one_rc = process_file(
             in_csv=in_csv,
             out_csv=out_csv,
@@ -797,7 +822,7 @@ def main() -> int:
             n_drone=args.n_drone,
             workers=args.workers,
             ls_time_limit_sec=args.ls_time_limit_sec,
-            ls_out_root=ls_out_root / in_csv.stem,
+            ls_out_root=ls_out_root / out_stem,
         )
         rc = max(rc, one_rc)
     return rc
