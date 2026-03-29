@@ -42,10 +42,11 @@ jobs:
       - name: Build row-chunk matrix (balanced, max 250 jobs)
         id: mk
         env:
-          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || 'result/Question4,14/#/50_batch_all_valid.xlsx' }}
+          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || '' }}
           MAX_JOBS_INPUT: ${{ github.event.inputs.max_jobs || '250' }}
           DEFAULT_CSV_FILES: |
-                  result/Question4,14/To_refine_csv_2truck_1drone/50 batch cluster 2 truck 1 drone.csv
+            result/Question4,14/#/50_batch_all_valid.xlsx
+            result/Question4,14/To_refine_csv_2truck_1drone/50 batch cluster 2 truck 1 drone.csv
         run: |
           python - << 'PY'
           import csv
@@ -88,15 +89,22 @@ jobs:
 
           files = []
           seen = set()
+          missing = []
           for s in chosen:
               p = pathlib.Path(s)
               if not p.is_file():
-                  raise SystemExit(f"CSV not found: {p}")
+                  missing.append(str(p))
+                  continue
               key = str(p)
               if key in seen:
                   continue
               seen.add(key)
               files.append(p)
+
+          for m in missing:
+              print(f"[WARN] input not found on runner, skip: {m}")
+          if not files:
+              raise SystemExit("No input files found on runner after filtering missing paths")
 
           row_count = {}
           total_rows = 0
