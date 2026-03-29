@@ -1,0 +1,80 @@
+name: Refine F5 Batch CSV
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: "Parallel row jobs (max 3 on GitHub runner)"
+        required: false
+        default: "3"
+      ls_time_limit_sec:
+        description: "Local-search time limit per row (seconds)"
+        required: false
+        default: "120"
+      n_truck:
+        description: "Number of trucks"
+        required: false
+        default: "2"
+      n_drone:
+        description: "Number of drones"
+        required: false
+        default: "1"
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build read_data_f5
+        run: |
+          g++ -std=c++17 -O2 C_Version/Function5.cpp -o C_Version/read_data_f5
+
+      - name: Run refine/improve/recompute (2 truck, 1 drone)
+        env:
+          WORKERS: ${{ github.event.inputs.workers || '3' }}
+          LS_TIME_LIMIT_SEC: ${{ github.event.inputs.ls_time_limit_sec || '120' }}
+          N_TRUCK: ${{ github.event.inputs.n_truck || '2' }}
+          N_DRONE: ${{ github.event.inputs.n_drone || '1' }}
+        run: |
+          if [ "${WORKERS}" -gt 3 ]; then
+            echo "WORKERS=${WORKERS} exceeds runner-safe limit, clamp to 3"
+            WORKERS=3
+          fi
+          INPUT_DIR="result/Question4,14/tracked_inputs_2truck_1drone"
+          if [ ! -d "$INPUT_DIR" ]; then
+            echo "Missing input directory: $INPUT_DIR"
+            exit 1
+          fi
+
+          mapfile -t INPUTS < <(find "$INPUT_DIR" -maxdepth 1 -type f -name "*.csv" | sort)
+          if [ "${#INPUTS[@]}" -eq 0 ]; then
+            echo "No input CSV files found in $INPUT_DIR"
+            exit 1
+          fi
+
+          python refine_improve_recompute_batch_f5.py \
+            --inputs "${INPUTS[@]}" \
+            --solver-bin C_Version/read_data_f5 \
+            --n-truck "$N_TRUCK" \
+            --n-drone "$N_DRONE" \
+            --workers "$WORKERS" \
+            --ls-time-limit-sec "$LS_TIME_LIMIT_SEC"
+
+      - name: Upload refined outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: refined-f5-batch
+          path: |
+            result/Question4,14/refined_csv_2truck_1drone
+            result/Question4,14/ls_outputs_f5_row_jobs
+          if-no-files-found: warn

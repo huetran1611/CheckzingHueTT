@@ -42,7 +42,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.make-matrix.outputs.matrix }}
-      total: ${{ steps.make-matrix.outputs.total }}
+      total_jobs: ${{ steps.make-matrix.outputs.total_jobs }}
+      total_batches: ${{ steps.make-matrix.outputs.total_batches }}
+      batch_size: ${{ steps.make-matrix.outputs.batch_size }}
     steps:
       - uses: actions/checkout@v4
       - name: Build matrix from folder + input parameters
@@ -54,9 +56,10 @@ jobs:
           REPS: ${{ github.event.inputs.reps || '3' }}
           TRUCK_COUNT: ${{ github.event.inputs.truck_count || '2' }}
           DRONE_COUNT: ${{ github.event.inputs.drone_count || '1' }}
+          MAX_MATRIX_JOBS: '250'
         run: |
           python - << 'PY'
-          import glob, json, os
+          import glob, json, os, math
           
           def parse_int_list(raw: str):
               raw = (raw or "").strip()
@@ -103,14 +106,53 @@ jobs:
                           "truck_count": t,
                           "drone_count": d
                       })
+          total_jobs = len(jobs)
+          if total_jobs == 0:
+              raise SystemExit(f"No .dat files found in folder: {folder}")
+
+          max_matrix_jobs = int(os.environ.get("MAX_MATRIX_JOBS", "250"))
+          if max_matrix_jobs <= 0:
+              max_matrix_jobs = 250
+          # Keep matrix size <= max_matrix_jobs by chunking tasks into batches.
+          batch_size = max(1, math.ceil(total_jobs / max_matrix_jobs))
+          batches = []
+          for i in range(0, total_jobs, batch_size):
+              chunk = jobs[i:i + batch_size]
+              batches.append({
+                  "batch_id": len(batches) + 1,
+                  "tasks": chunk
+              })
+
           with open("matrix.json", "w", encoding="utf-8") as fp:
-              json.dump(jobs, fp)
-          print(json.dumps(jobs))
-          print(f"Total jobs: {len(jobs)} (instances={len(files)}, A={a_vals}, L={l_vals})")
+              json.dump(batches, fp)
+          print(json.dumps(batches))
+          print(
+              f"Total task jobs: {total_jobs}, matrix batches: {len(batches)}, "
+              f"batch_size: {batch_size} (instances={len(files)}, A={a_vals}, L={l_vals})"
+          )
           PY
-          TOTAL=$(python -c "import json; print(len(json.load(open('matrix.json'))))")
+          TOTAL_JOBS=$(python - << 'PY'
+          import json
+          batches = json.load(open('matrix.json'))
+          print(sum(len(b["tasks"]) for b in batches))
+          PY
+          )
+          TOTAL_BATCHES=$(python - << 'PY'
+          import json
+          batches = json.load(open('matrix.json'))
+          print(len(batches))
+          PY
+          )
+          BATCH_SIZE=$(python - << 'PY'
+          import json
+          batches = json.load(open('matrix.json'))
+          print(max((len(b["tasks"]) for b in batches), default=0))
+          PY
+          )
           echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
-          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "total_jobs=$TOTAL_JOBS" >> "$GITHUB_OUTPUT"
+          echo "total_batches=$TOTAL_BATCHES" >> "$GITHUB_OUTPUT"
+          echo "batch_size=$BATCH_SIZE" >> "$GITHUB_OUTPUT"
 
   solve:
     needs: build-matrix
@@ -119,7 +161,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
+        batch: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
@@ -134,38 +176,73 @@ jobs:
         env:
           SEED_XLSX: ${{ github.event.inputs.seed_xlsx || 'result/Question4,14/50_batch_best_demand1.xlsx' }}
           SEED_SHEET: ${{ github.event.inputs.seed_sheet || 'yellow_rows' }}
+          BATCH_JSON: ${{ toJson(matrix.batch) }}
         run: |
           set -euo pipefail
           mkdir -p results
-          : > cmds.txt
+          python3 - << 'PY'
+          import json, os
+          batch = json.loads(os.environ["BATCH_JSON"])
+          with open("batch_tasks.json", "w", encoding="utf-8") as f:
+              json.dump(batch["tasks"], f)
+          print(f"Batch {batch['batch_id']} has {len(batch['tasks'])} tasks")
+          PY
 
-          SEED_FILE="results/seed_${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}.txt"
-          python3 select_seed_solution_from_xlsx.py \
-            --xlsx "${SEED_XLSX}" \
-            --instance "${{ matrix.task.instance }}" \
-            --a "${{ matrix.task.A }}" \
-            --l "${{ matrix.task.L }}" \
-            --seed-out "${SEED_FILE}" \
-            --sheet "${SEED_SHEET}"
+          python3 - << 'PY'
+          import json, os, pathlib, subprocess
+          tasks = json.load(open("batch_tasks.json", encoding="utf-8"))
+          for t in tasks:
+              task_dir = pathlib.Path("results") / f"job_{t['job_id']}"
+              task_dir.mkdir(parents=True, exist_ok=True)
+              seed_file = task_dir / f"seed_{t['base']}_A{t['A']}_L{t['L']}.txt"
+              subprocess.check_call([
+                  "python3", "select_seed_solution_from_xlsx.py",
+                  "--xlsx", os.environ["SEED_XLSX"],
+                  "--instance", str(t["instance"]),
+                  "--a", str(t["A"]),
+                  "--l", str(t["L"]),
+                  "--seed-out", str(seed_file),
+                  "--sheet", os.environ.get("SEED_SHEET", "")
+              ])
+          PY
 
-          for r in $(seq 1 ${{ matrix.task.reps }}); do
-            echo "N_TRUCK=${{ matrix.task.truck_count }} N_DRONE=${{ matrix.task.drone_count }} SOL_OUT_DIR=results FIX_DEMAND_EQUAL1=1 SOLVER_TIME_LIMIT_SEC=7200 LS_LIGHT_SEEN_CAP=200000 LS_STRONG_SEEN_CAP=200000 ./C_Version/read_data_f3 '${{ matrix.task.instance }}' '${{ matrix.task.A }}' '${{ matrix.task.L }}' '${SEED_FILE}' > results/${{ matrix.task.base }}_A${{ matrix.task.A }}_L${{ matrix.task.L }}_r${r}.log" >> cmds.txt
+          for task_json in $(python3 - << 'PY'
+          import json
+          tasks = json.load(open("batch_tasks.json", encoding="utf-8"))
+          for t in tasks:
+              print(json.dumps(t, separators=(",", ":")))
+          PY
+          ); do
+            JOB_ID=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["job_id"])' "$task_json")
+            BASE=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["base"])' "$task_json")
+            INSTANCE=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["instance"])' "$task_json")
+            A=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["A"])' "$task_json")
+            L=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["L"])' "$task_json")
+            REPS=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reps"])' "$task_json")
+            TCOUNT=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["truck_count"])' "$task_json")
+            DCOUNT=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["drone_count"])' "$task_json")
+
+            TASK_DIR="results/job_${JOB_ID}"
+            SEED_FILE="${TASK_DIR}/seed_${BASE}_A${A}_L${L}.txt"
+            : > "${TASK_DIR}/cmds.txt"
+            for r in $(seq 1 "$REPS"); do
+              echo "N_TRUCK=${TCOUNT} N_DRONE=${DCOUNT} SOL_OUT_DIR=${TASK_DIR} FIX_DEMAND_EQUAL1=1 SOLVER_TIME_LIMIT_SEC=7200 LS_LIGHT_SEEN_CAP=200000 LS_STRONG_SEEN_CAP=200000 ./C_Version/read_data_f3 '${INSTANCE}' '${A}' '${L}' '${SEED_FILE}' > ${TASK_DIR}/${BASE}_A${A}_L${L}_r${r}.log" >> "${TASK_DIR}/cmds.txt"
+            done
+            parallel -j3 < "${TASK_DIR}/cmds.txt"
+
+            python gha_write_run_meta.py \
+              --results-dir "${TASK_DIR}" \
+              --base "${BASE}" \
+              --a "${A}" \
+              --l "${L}" \
+              --reps "${REPS}" \
+              --job-id "${JOB_ID}" \
+              --instance "${INSTANCE}"
           done
-          cat cmds.txt
-          parallel -j3 < cmds.txt
-
-          python gha_write_run_meta.py \
-            --results-dir results \
-            --base "${{ matrix.task.base }}" \
-            --a "${{ matrix.task.A }}" \
-            --l "${{ matrix.task.L }}" \
-            --reps "${{ matrix.task.reps }}" \
-            --job-id "${{ matrix.task.job_id }}" \
-            --instance "${{ matrix.task.instance }}"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: solvef3-seeded-job-${{ matrix.task.job_id }}
+          name: solvef3-seeded-batch-${{ matrix.batch.batch_id }}
           path: results/
 
   summarize:
