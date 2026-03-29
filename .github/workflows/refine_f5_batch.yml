@@ -20,6 +20,10 @@ on:
         description: "Number of drones"
         required: false
         default: "1"
+      csv_files:
+        description: "CSV list (JSON array or comma/newline list). Leave empty to use defaults in YAML."
+        required: false
+        default: ""
 
 jobs:
   build-matrix:
@@ -31,15 +35,52 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build CSV matrix
         id: mk
+        env:
+          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || '' }}
+          DEFAULT_CSV_FILES: |
+            result/Question4,14/To_refine_csv_2truck_1drone/50 batch cluster 2 truck 1 drone.csv
         run: |
           python - << 'PY'
-          import json
+          import json, os
           import pathlib
 
-          d = pathlib.Path("result/Question4,14/To_refine_csv_2truck_1drone")
-          files = sorted(p for p in d.glob("*.csv") if p.is_file())
+          def parse_csv_list(raw: str):
+              raw = (raw or "").strip()
+              if not raw:
+                  return []
+              if raw.startswith("["):
+                  arr = json.loads(raw)
+                  if not isinstance(arr, list):
+                      raise SystemExit("csv_files JSON must be an array")
+                  return [str(x).strip() for x in arr if str(x).strip()]
+              out = []
+              for ln in raw.splitlines():
+                  for part in ln.split(","):
+                      s = part.strip()
+                      if s:
+                          out.append(s)
+              return out
+
+          user_list = parse_csv_list(os.environ.get("CSV_FILES_INPUT", ""))
+          default_list = parse_csv_list(os.environ.get("DEFAULT_CSV_FILES", ""))
+          chosen = user_list if user_list else default_list
+          if not chosen:
+              raise SystemExit("No csv_files provided and DEFAULT_CSV_FILES is empty")
+
+          files = []
+          seen = set()
+          for s in chosen:
+              p = pathlib.Path(s)
+              if not p.is_file():
+                  raise SystemExit(f"CSV not found: {p}")
+              key = str(p)
+              if key in seen:
+                  continue
+              seen.add(key)
+              files.append(p)
+
           if not files:
-              raise SystemExit(f"No input csv files in {d}")
+              raise SystemExit("No valid input csv files")
           matrix = []
           for i, p in enumerate(files, start=1):
               matrix.append({
