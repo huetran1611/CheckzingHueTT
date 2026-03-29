@@ -21,7 +21,7 @@ on:
         required: false
         default: "3"
       csv_files:
-        description: "CSV list (JSON array or comma/newline list). Empty = defaults in YAML."
+        description: "CSV list (JSON array or newline list). Empty = defaults in YAML."
         required: false
         default: ""
 
@@ -37,7 +37,7 @@ jobs:
       - name: Build row-chunk matrix (3 rows/job)
         id: mk
         env:
-          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || '' }}
+          CSV_FILES_INPUT: ${{ github.event.inputs.csv_files || 'result/Question4,14/To_refine_csv_2truck_1drone/50 batch cluster 2 truck 1 drone.csv' }}
           CHUNK_SIZE_INPUT: ${{ github.event.inputs.chunk_size || '3' }}
           DEFAULT_CSV_FILES: |
             result/Question4,14/To_refine_csv_2truck_1drone/50 batch cluster 2 truck 1 drone.csv
@@ -61,10 +61,9 @@ jobs:
                   return [str(x).strip() for x in arr if str(x).strip()]
               out = []
               for ln in raw.splitlines():
-                  for part in ln.split(","):
-                      s = part.strip()
-                      if s:
-                          out.append(s)
+                  s = ln.strip()
+                  if s:
+                      out.append(s)
               return out
 
           def sanitize(s: str) -> str:
