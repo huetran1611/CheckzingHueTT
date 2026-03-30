@@ -1050,7 +1050,9 @@ static bool insert_rendezvous_first_improve(const Params &p, Solution &s) {
             for (size_t pos = 1; pos + 1 < stops.size(); ++pos) {
                 int city = stops[pos].customer;
                 if (city <= 0 || city >= n_all) continue;
-                if (p.customers[city].release <= 0) continue;
+                // Function6 policy:
+                // - package with release<=0 is NOT allowed to be resupplied
+                // - rendezvous city with release<=0 is still allowed as a sync point
                 if (!p.reachable_mask.empty() && !p.reachable_mask[city]) continue;
                 if (is_resup[city]) continue;
 
