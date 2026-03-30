@@ -4122,6 +4122,153 @@ static void read_data_fix_demand_equal1(const string &path, Params &p){
     }
 }
 
+// Init policy:
+// - force top 10% highest-release packages to be resupplied in the initial solution
+// - split into multiple trips if needed by payload
+// - for each truck, choose the earliest selected customer on that truck as rendezvous;
+//   if that city is not drone-reachable, move earlier along that truck route to the
+//   earliest reachable city before it.
+static void init_force_top_release_resupply(const Params &p, Solution &sol, double ratio = 0.10) {
+    const int n = (int)p.customers.size();
+    if (n <= 1 || sol.trucks.empty()) return;
+
+    int target_cnt = (int)std::ceil(std::max(0.0, ratio) * (double)(n - 1));
+    if (target_cnt <= 0) return;
+
+    std::vector<int> custs;
+    custs.reserve((size_t)(n - 1));
+    for (int c = 1; c < n; ++c) custs.push_back(c);
+    std::sort(custs.begin(), custs.end(), [&](int a, int b) {
+        if (p.customers[a].release != p.customers[b].release)
+            return p.customers[a].release > p.customers[b].release; // highest release first
+        return a < b;
+    });
+    if (target_cnt > (int)custs.size()) target_cnt = (int)custs.size();
+    custs.resize((size_t)target_cnt);
+
+    std::vector<char> target(n, 0);
+    for (int c : custs) target[c] = 1;
+
+    // Remove targeted packages from existing drone events to avoid duplicates.
+    for (auto &trip : sol.drone_queue) {
+        for (auto &ev : trip.events) {
+            std::vector<int> kept;
+            kept.reserve(ev.packages.size());
+            for (int x : ev.packages) {
+                if (x > 0 && x < n && target[x]) continue;
+                kept.push_back(x);
+            }
+            ev.packages.swap(kept);
+        }
+        std::vector<ResupplyEvent> kept_ev;
+        kept_ev.reserve(trip.events.size());
+        for (auto &ev : trip.events) if (!ev.packages.empty()) kept_ev.push_back(std::move(ev));
+        trip.events.swap(kept_ev);
+    }
+    {
+        std::vector<DroneTrip> kept_trips;
+        kept_trips.reserve(sol.drone_queue.size());
+        for (auto &trip : sol.drone_queue) if (!trip.events.empty()) kept_trips.push_back(std::move(trip));
+        sol.drone_queue.swap(kept_trips);
+    }
+
+    std::vector<int> owner_truck(n, -1), owner_pos(n, -1);
+    for (size_t t = 0; t < sol.trucks.size(); ++t) {
+        for (size_t pos = 0; pos < sol.trucks[t].stops.size(); ++pos) {
+            int c = sol.trucks[t].stops[pos].customer;
+            if (c > 0 && c < n) {
+                owner_truck[c] = (int)t;
+                owner_pos[c] = (int)pos;
+            }
+        }
+    }
+
+    auto city_reachable = [&](int city) -> bool {
+        if (city <= 0 || city >= n) return false;
+        if (!p.reachable_mask.empty() && !p.reachable_mask[city]) return false;
+        return true;
+    };
+
+    int inserted_pkg_cnt = 0;
+    for (int t = 0; t < (int)sol.trucks.size(); ++t) {
+        std::vector<int> pkgs;
+        pkgs.reserve((size_t)target_cnt);
+        for (int c : custs) {
+            if (!target[c]) continue;
+            if (owner_truck[c] != t) continue;
+            if (owner_pos[c] <= 0) continue;
+            if (p.customers[c].release <= 0) continue; // keep Function6 policy
+            pkgs.push_back(c);
+        }
+        if (pkgs.empty()) continue;
+        std::sort(pkgs.begin(), pkgs.end(), [&](int a, int b){
+            if (owner_pos[a] != owner_pos[b]) return owner_pos[a] < owner_pos[b];
+            return a < b;
+        });
+
+        int rv_pos = -1;
+        // Earliest selected customer on this truck.
+        int earliest_sel_pos = owner_pos[pkgs.front()];
+        int earliest_sel_city = sol.trucks[t].stops[(size_t)earliest_sel_pos].customer;
+        if (city_reachable(earliest_sel_city)) {
+            rv_pos = earliest_sel_pos;
+        } else {
+            // If it is not reachable, move earlier along route until a reachable rendezvous is found.
+            for (int pos = earliest_sel_pos - 1; pos >= 1; --pos) {
+                int city = sol.trucks[t].stops[(size_t)pos].customer;
+                if (city_reachable(city)) { rv_pos = pos; break; }
+            }
+        }
+        if (rv_pos < 0) continue;
+        int rv_city = sol.trucks[t].stops[(size_t)rv_pos].customer;
+
+        std::vector<int> batch;
+        double load = 0.0;
+        auto flush_batch = [&]() {
+            if (batch.empty()) return;
+            DroneTrip trip;
+            trip.events.push_back(ResupplyEvent{rv_city, t, batch});
+            int ins = find_insert_pos_queue(p, sol, trip);
+            if (ins >= 0) {
+                Solution trial = sol;
+                trial.drone_queue.insert(trial.drone_queue.begin() + ins, trip);
+                if (trip_endurance_optimistic(p, trial, trial.drone_queue[(size_t)ins])) {
+                    std::string why;
+                    if (validate_solution(p, trial, why)) {
+                        sol = std::move(trial);
+                        inserted_pkg_cnt += (int)batch.size();
+                    }
+                }
+            }
+            batch.clear();
+            load = 0.0;
+        };
+
+        for (int pkg : pkgs) {
+            double d = (double)p.customers[pkg].demand;
+            if (d > p.M_d + 1e-9) continue;
+            if (!batch.empty() && load + d > p.M_d + 1e-9) flush_batch();
+            batch.push_back(pkg);
+            load += d;
+        }
+        flush_batch();
+    }
+
+    normalize_after_transform(p, sol);
+
+    int realized = 0;
+    std::vector<char> is_resup(n, 0);
+    for (const auto &trip : sol.drone_queue)
+        for (const auto &ev : trip.events)
+            for (int x : ev.packages)
+                if (x > 0 && x < n) is_resup[x] = 1;
+    for (int c : custs) if (is_resup[c]) realized++;
+
+    std::cout << "[INIT] forced top-release resupply target " << target_cnt
+              << " inserted " << inserted_pkg_cnt
+              << " realized " << realized << "\n";
+}
+
 int main(int argc, char** argv){
     try {
         g_solve_start = std::chrono::steady_clock::now();
@@ -4206,6 +4353,12 @@ int main(int argc, char** argv){
     if (const char *v = std::getenv("VALIDATE_ONLY")) {
         if (*v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T')) validate_only = true;
     }
+
+    if (!validate_only) {
+        const double init_top_rel_ratio = env_double("INIT_TOP_RELEASE_RESUPPLY_RATIO", 0.10);
+        init_force_top_release_resupply(p, sol, init_top_rel_ratio);
+    }
+
     if (validate_only) {
         if (!loaded_seed) {
             std::cout << "[VALIDATE] FAIL: seed not loaded";
