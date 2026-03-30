@@ -1,7 +1,6 @@
 name: Solve F6 Summary Only
 
 on:
-  push:
   workflow_dispatch:
     inputs:
       source_run_id:
