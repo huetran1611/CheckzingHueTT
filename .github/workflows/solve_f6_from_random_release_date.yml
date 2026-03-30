@@ -530,9 +530,19 @@ jobs:
           PY
 
       - name: Recompute metrics from best_solution and best_multi_solution (Function6-style)
+        id: recompute
         run: |
+          set +e
           FIX_DEMAND_EQUAL1=1 N_TRUCK=2 N_DRONE=1 SOLVER_BIN=C_Version/read_data_f6 PARALLEL_JOBS=8 \
             python recompute_metrics_from_solutions_csv.py summary/solve_f6_from_augmented_inits_summary.csv
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ -f batch_init_ats_improved_with_multivisit_recompute_failures.csv ]; then
+            echo "recompute_failures_lines=$(wc -l < batch_init_ats_improved_with_multivisit_recompute_failures.csv)" >> "$GITHUB_OUTPUT"
+          else
+            echo "recompute_failures_lines=0" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
 
       - name: Remove rows with zero multi-visit in best_multi_solution
         run: |
@@ -585,4 +595,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: solve-f6-augmented-summary
-          path: summary/solve_f6_from_augmented_inits_summary.csv
+          path: |
+            summary/solve_f6_from_augmented_inits_summary.csv
+            batch_init_ats_improved_with_multivisit_recompute_failures.csv
+          if-no-files-found: ignore
+
+      - name: Recompute warning
+        if: steps.recompute.outputs.rc != '0'
+        run: |
+          echo "Recompute had some row-level failures (exit code=${{ steps.recompute.outputs.rc }})."
+          echo "Failures report lines: ${{ steps.recompute.outputs.recompute_failures_lines }}"
