@@ -1,6 +1,7 @@
 name: Solve F6 On C201 (V1 V2 - Cluster Random Uniform)
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       a_values:
