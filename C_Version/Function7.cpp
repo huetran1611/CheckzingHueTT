@@ -18,6 +18,7 @@
 #include <array>
 #include <deque>
 #include <cstdint>
+#include <functional>
 #include <unistd.h>
 #include "Solution.hpp"
 using namespace std;
