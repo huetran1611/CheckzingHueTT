@@ -1,7 +1,7 @@
 name: Solve F6 On C201 (V5-V6 - Cluster Random Uniform)
 # chay lan 2
 on:
-  push:
+  #push:
   workflow_dispatch:
     inputs:
       a_values:

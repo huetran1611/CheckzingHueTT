@@ -1,0 +1,354 @@
+name: Solve F7 Custom Cluster All Flat (A8 L90 T2 D2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_dir:
+        description: "Dataset folder"
+        required: false
+        default: "test_data/data_demand_random_50_batch_custom_cluster_all_flat"
+      solver_time_limit_sec:
+        description: "Per-instance solver time limit (seconds)"
+        required: false
+        default: "7200" # 120 minutes
+      max_parallel:
+        description: "Max parallel matrix jobs"
+        required: false
+        default: "12"
+
+permissions:
+  contents: read
+
+jobs:
+  build-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mk.outputs.matrix }}
+      count: ${{ steps.mk.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: mk
+        env:
+          DATASET_DIR: ${{ github.event.inputs.dataset_dir || 'test_data/data_demand_random_50_batch_custom_cluster_all_flat' }}
+        run: |
+          python - << 'PY'
+          import json
+          import pathlib
+          import os
+
+          dataset = pathlib.Path(os.environ["DATASET_DIR"])
+          files = sorted(dataset.glob("*.dat"))
+          tasks = []
+          for p in files:
+              tasks.append({
+                  "dat": str(p),
+                  "base": p.stem,
+                  "run_name": f"{p.stem}_A8_L90",
+              })
+
+          with open("matrix.json", "w", encoding="utf-8") as f:
+              json.dump(tasks, f)
+
+          out = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with out.open("a", encoding="utf-8") as g:
+              g.write("matrix=" + json.dumps(tasks) + "\n")
+              g.write("count=" + str(len(tasks)) + "\n")
+          print(f"[MATRIX] dataset={dataset} files={len(tasks)}")
+          PY
+
+  solve:
+    needs: build-matrix
+    if: ${{ needs.build-matrix.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJson(github.event.inputs.max_parallel || '12') }}
+      matrix:
+        task: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build read_data_f7
+        run: g++ -std=c++17 -O2 C_Version/Function7.cpp -o C_Version/read_data_f7
+
+      - name: Solve one instance and collect solutions
+        env:
+          TASK_JSON: ${{ toJson(matrix.task) }}
+          SOLVER_TIME_LIMIT_SEC: ${{ github.event.inputs.solver_time_limit_sec || '7200' }}
+        run: |
+          mkdir -p run_logs run_outputs
+          python - << 'PY'
+          import ast
+          import json
+          import os
+          import pathlib
+          import re
+          import shutil
+          import subprocess
+          import sys
+
+          task = json.loads(os.environ["TASK_JSON"])
+          dat_path = task["dat"]
+          run_name = task["run_name"]
+          run_dir = pathlib.Path("run_outputs") / run_name
+          run_dir.mkdir(parents=True, exist_ok=True)
+          log_path = pathlib.Path("run_logs") / f"{run_name}.log"
+
+          try:
+              solver_limit_sec = float(os.environ.get("SOLVER_TIME_LIMIT_SEC", "7200"))
+          except Exception:
+              solver_limit_sec = 7200.0
+          solver_limit_sec = max(1.0, min(7200.0, solver_limit_sec))
+          solver_limit_str = str(int(solver_limit_sec)) if abs(solver_limit_sec - int(solver_limit_sec)) < 1e-9 else str(solver_limit_sec)
+
+          env = os.environ.copy()
+          env["FIX_DEMAND_EQUAL1"] = "1"
+          env["N_TRUCK"] = "2"
+          env["N_DRONE"] = "2"
+          env["SOL_OUT_DIR"] = str(run_dir)
+          env["SOLVER_TIME_LIMIT_SEC"] = solver_limit_str
+
+          cmd = ["C_Version/read_data_f7", dat_path, "8", "90"]
+          with log_path.open("w", encoding="utf-8") as lf:
+              proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env, check=False)
+
+          txt = log_path.read_text(encoding="utf-8", errors="replace")
+
+          def first_text(pattern: str) -> str:
+              m = re.search(pattern, txt)
+              return m.group(1).strip() if m else ""
+
+          def clean_path(p: str) -> str:
+              p = (p or "").strip()
+              if p in {"(write failed)", "(not found)"}:
+                  return ""
+              return p
+
+          def resolve_path(p: str) -> pathlib.Path | None:
+              if not p:
+                  return None
+              q = pathlib.Path(p)
+              if not q.is_absolute():
+                  q = pathlib.Path(".") / q
+              return q if q.exists() else None
+
+          def read_solution_text(p: str) -> str:
+              rp = resolve_path(p)
+              if rp is None:
+                  return ""
+              return rp.read_text(encoding="utf-8", errors="replace").strip()
+
+          def validate_solution_file(path_str: str) -> bool:
+              rp = resolve_path(path_str)
+              if rp is None:
+                  return False
+              envv = os.environ.copy()
+              envv["VALIDATE_ONLY"] = "1"
+              envv["N_TRUCK"] = "2"
+              envv["N_DRONE"] = "2"
+              envv["FIX_DEMAND_EQUAL1"] = "1"
+              r = subprocess.run(
+                  ["C_Version/read_data_f7", dat_path, "8", "90", str(rp)],
+                  capture_output=True,
+                  text=True,
+                  env=envv,
+                  check=False,
+              )
+              return (r.returncode == 0) and ("[VALIDATE] OK" in ((r.stdout or "") + (r.stderr or "")))
+
+          def parse_solution(sol_text: str):
+              if not sol_text:
+                  return None
+              s = sol_text.strip()
+              if s.lower().startswith("solution"):
+                  eq = s.find("=")
+                  if eq >= 0:
+                      s = s[eq + 1 :].strip()
+              try:
+                  return ast.literal_eval(s)
+              except Exception:
+                  return None
+
+          def multi_visit_count(sol_obj) -> int:
+              if not isinstance(sol_obj, list) or len(sol_obj) < 2:
+                  return 0
+              dq = sol_obj[1] if isinstance(sol_obj[1], list) else []
+              cnt = 0
+              for tr in dq:
+                  if isinstance(tr, list) and len(tr) >= 2:
+                      cnt += 1
+              return cnt
+
+          best_path = clean_path(first_text(r"\[SOL\] best solution file:\s*(.+)"))
+          best_single_path = clean_path(first_text(r"\[SOL\] best single-visit solution file:\s*(.+)"))
+          best_multi_path = clean_path(first_text(r"\[SOL\] best multi-visit solution file:\s*(.+)"))
+          best_single_fit = first_text(r"\[SOL\] best single-visit makespan:\s*([0-9]+(?:\.[0-9]+)?)")
+          best_multi_fit = first_text(r"\[SOL\] best multi-visit makespan:\s*([0-9]+(?:\.[0-9]+)?)")
+
+          best_text = read_solution_text(best_path)
+          best_obj = parse_solution(best_text)
+          best_mv_count = multi_visit_count(best_obj)
+
+          best_single_text = read_solution_text(best_single_path)
+          best_single_obj = parse_solution(best_single_text)
+          best_single_mv_count = multi_visit_count(best_single_obj)
+
+          best_multi_text = read_solution_text(best_multi_path)
+          best_multi_obj = parse_solution(best_multi_text)
+          best_multi_mv_count = multi_visit_count(best_multi_obj)
+
+          best_valid = validate_solution_file(best_path) if best_path else False
+          best_single_valid = validate_solution_file(best_single_path) if best_single_path else False
+          best_multi_valid = validate_solution_file(best_multi_path) if best_multi_path else False
+
+          if not best_valid:
+              best_path = ""
+              best_text = ""
+              best_mv_count = 0
+          if not best_single_valid:
+              best_single_path = ""
+              best_single_text = ""
+              best_single_mv_count = 0
+              best_single_fit = ""
+          if not best_multi_valid:
+              best_multi_path = ""
+              best_multi_text = ""
+              best_multi_mv_count = 0
+              best_multi_fit = ""
+
+          # Required outputs:
+          # 1) best_solution
+          # 2) best_single_visit_solution (best encountered with trip_count>0 and multi_visit_trip_count==0)
+          # 3) best_multi_visit_solution (best encountered with multi_visit_trip_count>0)
+
+          (run_dir / "best_solution.txt").write_text(best_text, encoding="utf-8")
+          (run_dir / "best_multi_visit_solution.txt").write_text(best_multi_text, encoding="utf-8")
+          (run_dir / "best_single_visit_solution.txt").write_text(best_single_text, encoding="utf-8")
+
+          # Keep raw solver outputs (if files exist)
+          rp = resolve_path(best_path)
+          if rp is not None:
+              shutil.copy2(rp, run_dir / "raw_best_solution.txt")
+          rp = resolve_path(best_multi_path)
+          if rp is not None:
+              shutil.copy2(rp, run_dir / "raw_best_multi_visit_solution.txt")
+          rp = resolve_path(best_single_path)
+          if rp is not None:
+              shutil.copy2(rp, run_dir / "raw_best_single_visit_solution.txt")
+
+          meta = {
+              "instance": dat_path,
+              "A": 8,
+              "L": 90,
+              "n_truck": 2,
+              "n_drone": 2,
+              "solver_time_limit_sec": solver_limit_str,
+              "run_name": run_name,
+              "return_code": proc.returncode,
+              "best_solution_file": best_path,
+              "best_solution_valid": best_valid,
+              "best_solution_multi_visit_trip_count": best_mv_count,
+              "best_single_visit_solution_file": best_single_path,
+              "best_single_visit_solution_valid": best_single_valid,
+              "best_single_visit_trip_count": best_single_mv_count,
+              "best_single_visit_makespan": best_single_fit,
+              "best_single_visit_solution_found": bool(best_single_text),
+              "best_multi_visit_solution_file": best_multi_path,
+              "best_multi_visit_solution_valid": best_multi_valid,
+              "best_multi_visit_trip_count": best_multi_mv_count,
+              "best_multi_visit_makespan": best_multi_fit,
+              "log_file": str(log_path),
+            }
+          (run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+          print(f"[DONE] {run_name} rc={proc.returncode} best_mv={best_mv_count} best_multi_mv={best_multi_mv_count}")
+          if proc.returncode != 0:
+              sys.exit(proc.returncode)
+          PY
+
+      - name: Upload per-instance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run_${{ matrix.task.run_name }}
+          path: |
+            run_outputs/${{ matrix.task.run_name }}
+            run_logs/${{ matrix.task.run_name }}.log
+          if-no-files-found: warn
+
+  aggregate:
+    needs: [build-matrix, solve]
+    if: always() && needs.build-matrix.outputs.count != '0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: run_*
+          path: downloaded
+          merge-multiple: false
+
+      - name: Build summary CSV
+        run: |
+          python - << 'PY'
+          import csv
+          import json
+          import pathlib
+
+          metas = sorted(pathlib.Path("downloaded").rglob("meta.json"))
+          out_dir = pathlib.Path("results")
+          out_dir.mkdir(parents=True, exist_ok=True)
+          out_csv = out_dir / "summary_f7_custom_cluster_all_flat_A8_L90.csv"
+
+          fields = [
+              "run_name",
+              "instance",
+              "A",
+              "L",
+              "n_truck",
+              "n_drone",
+              "solver_time_limit_sec",
+              "return_code",
+              "best_solution_file",
+              "best_solution_valid",
+              "best_solution_multi_visit_trip_count",
+              "best_single_visit_solution_file",
+              "best_single_visit_solution_valid",
+              "best_single_visit_trip_count",
+              "best_single_visit_makespan",
+              "best_single_visit_solution_found",
+              "best_multi_visit_solution_file",
+              "best_multi_visit_solution_valid",
+              "best_multi_visit_trip_count",
+              "best_multi_visit_makespan",
+              "log_file",
+          ]
+
+          rows = []
+          for p in metas:
+              try:
+                  rows.append(json.loads(p.read_text(encoding="utf-8")))
+              except Exception:
+                  pass
+          rows.sort(key=lambda r: r.get("run_name", ""))
+
+          with out_csv.open("w", newline="", encoding="utf-8") as f:
+              w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+              w.writeheader()
+              w.writerows(rows)
+
+          print(f"Wrote {len(rows)} rows to {out_csv}")
+          PY
+
+      - name: Upload aggregate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: summary_f7_custom_cluster_all_flat_A8_L90
+          path: |
+            results/summary_f7_custom_cluster_all_flat_A8_L90.csv
+            downloaded/**
+          if-no-files-found: warn
