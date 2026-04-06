@@ -328,6 +328,10 @@ jobs:
               "best_mult_fitness": best_multi_fitness,
               "best_single_fitness": best_single_fitness,
               "best_no_resupply_fitness": best_no_resupply_fitness,
+              "best_solution": best_path,
+              "best_multi_solution": best_multi_path,
+              "best_single_solution": best_single_path,
+              "best_no_resupply_solution": best_no_resupply_path,
               "best_solution_file": best_path,
               "best_multi_solution_file": best_multi_path,
               "best_single_solution_file": best_single_path,
@@ -387,29 +391,79 @@ jobs:
         if: always()
         run: |
           python - << 'PY'
-          import csv, json, pathlib
+          import csv, json, pathlib, re
           metas = sorted(pathlib.Path("downloaded").rglob("meta.json"))
           rows = []
+          row_meta_path = {}
           for p in metas:
               try:
-                  rows.append(json.loads(p.read_text(encoding="utf-8")))
+                  r = json.loads(p.read_text(encoding="utf-8"))
+                  rows.append(r)
+                  if r.get("run_name"):
+                      row_meta_path[r.get("run_name")] = p
               except Exception:
                   pass
           rows.sort(key=lambda r: (r.get("group",""), r.get("instance_name",""), int(r.get("run_index",0))))
 
           out_dir = pathlib.Path("results")
           out_dir.mkdir(parents=True, exist_ok=True)
+          sol_dir = out_dir / "solutions"
+          (sol_dir / "best").mkdir(parents=True, exist_ok=True)
+          (sol_dir / "best_multi").mkdir(parents=True, exist_ok=True)
+          (sol_dir / "best_single").mkdir(parents=True, exist_ok=True)
+          (sol_dir / "best_no_resupply").mkdir(parents=True, exist_ok=True)
+
+          def safe_name(s: str) -> str:
+              return re.sub(r"[^A-Za-z0-9_.-]+", "_", s or "").strip("_") or "unknown"
+
+          def save_solution_copy(src: pathlib.Path, dst: pathlib.Path):
+              if not src.exists():
+                  return ""
+              txt = src.read_text(encoding="utf-8", errors="replace")
+              if not txt.strip():
+                  return ""
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              dst.write_text(txt, encoding="utf-8")
+              return str(dst)
+
+          for r in rows:
+              run_name = r.get("run_name", "")
+              meta_path = row_meta_path.get(run_name)
+              if not meta_path:
+                  continue
+              run_dir = meta_path.parent
+              inst = safe_name(r.get("instance_name", "instance"))
+              rn = safe_name(run_name)
+              r["summary_best_solution_text_file"] = save_solution_copy(
+                  run_dir / "best_solution.txt",
+                  sol_dir / "best" / f"{rn}__{inst}.txt",
+              )
+              r["summary_best_multi_solution_text_file"] = save_solution_copy(
+                  run_dir / "best_multi_visit_solution.txt",
+                  sol_dir / "best_multi" / f"{rn}__{inst}.txt",
+              )
+              r["summary_best_single_solution_text_file"] = save_solution_copy(
+                  run_dir / "best_single_visit_solution.txt",
+                  sol_dir / "best_single" / f"{rn}__{inst}.txt",
+              )
+              r["summary_best_no_resupply_solution_text_file"] = save_solution_copy(
+                  run_dir / "best_no_resupply_solution.txt",
+                  sol_dir / "best_no_resupply" / f"{rn}__{inst}.txt",
+              )
+
           out_csv = out_dir / "summary_f7_b8_cluster_random_3runs.csv"
           fields = [
               "run_name","instance","instance_name","group","beta","B","version","run_index",
               "A","L","n_truck","n_drone","solver_time_limit_sec","return_code",
               "best_fitness","best_multi_fitness","best_mult_fitness","best_single_fitness","best_no_resupply_fitness",
+              "best_solution","best_multi_solution","best_single_solution","best_no_resupply_solution",
               "best_solution_file","best_multi_solution_file","best_single_solution_file","best_no_resupply_solution_file",
               "best_solution_valid","best_multi_solution_valid","best_single_solution_valid","best_no_resupply_solution_valid",
               "best_trip_count","best_multi_visit_trip_count","best_avg_customers_per_trip","best_avg_drone_trip_time",
               "best_multi_trip_count","best_multi_multi_visit_trip_count","best_multi_avg_customers_per_trip","best_multi_avg_drone_trip_time",
               "best_single_trip_count","best_single_multi_visit_trip_count","best_single_avg_customers_per_trip","best_single_avg_drone_trip_time",
               "best_no_resupply_trip_count","best_no_resupply_multi_visit_trip_count","best_no_resupply_avg_customers_per_trip","best_no_resupply_avg_drone_trip_time",
+              "summary_best_solution_text_file","summary_best_multi_solution_text_file","summary_best_single_solution_text_file","summary_best_no_resupply_solution_text_file",
               "log_file"
           ]
           with out_csv.open("w", newline="", encoding="utf-8") as f:
@@ -478,5 +532,6 @@ jobs:
           path: |
             results/summary_f7_b8_cluster_random_3runs.csv
             results/summary_f7_b8_cluster_random_3runs_avg_by_instance.csv
+            results/solutions/**
             downloaded/**
           if-no-files-found: warn
