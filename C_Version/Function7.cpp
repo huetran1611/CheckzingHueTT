@@ -4923,6 +4923,102 @@ static void init_force_all_depot_pickup(const Params &p, Solution &sol, const st
     std::cout << "[INIT] fallback " << label << " => all customers served from depot\n";
 }
 
+// End-of-search recovery:
+// If no single-visit solution is found, try removing synchronization points
+// (drone rendezvous events) one-by-one from a multi-visit solution and normalize after each removal.
+// Stop once we obtain a valid single-visit solution.
+static bool recover_single_by_removing_sync_points(const Params &p, const Solution &src_multi, Solution &out_single) {
+    if (!has_multi_visit(src_multi)) return false;
+    Solution cur = src_multi;
+
+    auto solution_ok = [&](const Solution &cand) -> bool {
+        std::string why;
+        if (!validate_solution(p, cand, why)) return false;
+        auto fr = fitness_full(p, cand, nullptr);
+        return fr.first;
+    };
+
+    int remove_steps = 0;
+    while (has_multi_visit(cur)) {
+        bool progressed = false;
+        for (size_t ti = 0; ti < cur.drone_queue.size() && !progressed; ++ti) {
+            const auto &trip_ref = cur.drone_queue[ti];
+            if (trip_ref.events.size() <= 1) continue;
+            for (size_t ei = 0; ei < trip_ref.events.size(); ++ei) {
+                Solution trial = cur;
+                if (ti >= trial.drone_queue.size()) continue;
+                auto &trip = trial.drone_queue[ti];
+                if (ei >= trip.events.size()) continue;
+                trip.events.erase(trip.events.begin() + (long)ei);
+                if (trip.events.empty()) {
+                    trial.drone_queue.erase(trial.drone_queue.begin() + (long)ti);
+                }
+                normalize_after_transform(p, trial);
+                (void)reorder_drone_queue_truck_order_init_only(p, trial);
+                if (!solution_ok(trial)) continue;
+
+                remove_steps++;
+                if (is_single_visit_with_drone_trip(trial)) {
+                    out_single = std::move(trial);
+                    std::cout << "[POST] recovered single-visit by removing sync points, steps " << remove_steps << "\n";
+                    return true;
+                }
+                cur = std::move(trial);
+                progressed = true;
+                break;
+            }
+        }
+        if (!progressed) break;
+    }
+    return false;
+}
+
+// End-of-search fallback:
+// Build single-visit initialization on current truck routes by resupplying
+// packages with the largest release date on each truck (packed per-trip up to drone capacity).
+static bool fallback_build_single_from_top_release_current_routes(const Params &p, const Solution &base, Solution &out_single) {
+    const int n = (int)p.customers.size();
+    if (n <= 1 || base.trucks.empty()) return false;
+
+    Solution trial = base;
+    trial.drone_queue.clear();
+    normalize_after_transform(p, trial);
+
+    std::vector<int> selected;
+    for (const auto &tr : trial.trucks) {
+        int tmax = std::numeric_limits<int>::min();
+        for (const auto &st : tr.stops) {
+            int c = st.customer;
+            if (c <= 0 || c >= n) continue;
+            if (p.customers[c].release <= 0) continue;
+            if ((double)p.customers[c].demand > p.M_d + 1e-9) continue;
+            tmax = std::max(tmax, p.customers[c].release);
+        }
+        if (tmax == std::numeric_limits<int>::min()) continue;
+        for (const auto &st : tr.stops) {
+            int c = st.customer;
+            if (c <= 0 || c >= n) continue;
+            if (p.customers[c].release != tmax) continue;
+            if ((double)p.customers[c].demand > p.M_d + 1e-9) continue;
+            selected.push_back(c);
+        }
+    }
+    if (selected.empty()) return false;
+
+    init_force_selected_resupply(p, trial, selected, "post-fallback-top-release-current-route");
+    normalize_after_transform(p, trial);
+    (void)reorder_drone_queue_truck_order_init_only(p, trial);
+
+    std::string why;
+    if (!validate_solution(p, trial, why)) return false;
+    auto fr = fitness_full(p, trial, nullptr);
+    if (!fr.first) return false;
+    if (!is_single_visit_with_drone_trip(trial)) return false;
+
+    out_single = std::move(trial);
+    return true;
+}
+
 int main(int argc, char** argv){
     try {
         g_solve_start = std::chrono::steady_clock::now();
@@ -5401,6 +5497,40 @@ int main(int argc, char** argv){
         update_best_multi_solution_if_better(p, sol);
         update_best_single_solution_if_better(p, sol);
         update_best_no_resupply_solution_if_better(p, sol);
+
+        // User-requested post-search recovery for single-visit:
+        // 1) If single is missing, remove sync points one-by-one from multi-visit solution then normalize.
+        // 2) If still missing, fallback to single-trip init on current routes using top-release packages.
+        auto has_valid_single_at_end = [&]() -> bool {
+            if (!g_has_best_single_solution) return false;
+            std::string why;
+            if (!validate_solution(p, g_best_single_solution, why)) return false;
+            auto fr = fitness_full(p, g_best_single_solution, nullptr);
+            return fr.first;
+        };
+
+        if (!has_valid_single_at_end()) {
+            Solution recovered_single;
+            bool recovered = false;
+            if (g_has_best_multi_solution) {
+                recovered = recover_single_by_removing_sync_points(p, g_best_multi_solution, recovered_single);
+            }
+            if (!recovered && has_multi_visit(sol)) {
+                recovered = recover_single_by_removing_sync_points(p, sol, recovered_single);
+            }
+            if (recovered) {
+                std::cout << "[POST] single-visit recovered from multi-visit by sync-point removal\n";
+                update_best_single_solution_if_better(p, recovered_single);
+            }
+            if (!has_valid_single_at_end()) {
+                if (fallback_build_single_from_top_release_current_routes(p, sol, recovered_single)) {
+                    std::cout << "[POST] single-visit recovered from top-release single-trip fallback\n";
+                    update_best_single_solution_if_better(p, recovered_single);
+                } else {
+                    std::cout << "[POST] single-visit recovery failed (sync-point removal + top-release fallback)\n";
+                }
+            }
+        }
 
 	    std::cout << "[SOL] best solution detail:\n";
 	    print_solution_compact(std::cout, sol, p);
