@@ -205,6 +205,7 @@ static int trip_load(const Params &p, const DroneTrip &trip);
 static int find_insert_pos_queue(const Params &p, const Solution &s, const DroneTrip &cand);
 static bool trip_endurance_optimistic(const Params &p, const Solution &s, const DroneTrip &trip);
 static void normalize_after_transform(const Params &p, Solution &sol);
+static bool reorder_drone_queue_truck_order_init_only(const Params &p, Solution &sol);
 static std::pair<bool,double> fitness_full(const Params &p, const Solution &sol, double *truck_sum_out = nullptr);
 static double fitness(const Params &p, const Solution &sol, bool *valid_out);
 static bool relocate_sync_point_first_improve(const Params &p, Solution &s);
@@ -2387,6 +2388,79 @@ static int find_insert_pos_queue(const Params &p, const Solution &s, const Drone
         if (ok) return (int)insert_idx;
     }
     return -1;
+}
+
+// Init-only repair:
+// Reorder drone_queue so that, for each truck, trip order follows increasing rendezvous
+// position on that truck route. Keeps trip contents unchanged.
+static bool reorder_drone_queue_truck_order_init_only(const Params &p, Solution &sol) {
+    const int K = p.n_truck;
+    const int Q = (int)sol.drone_queue.size();
+    if (K <= 0 || Q <= 1) return false;
+
+    std::vector<std::vector<int>> first_pos((size_t)Q, std::vector<int>((size_t)K, std::numeric_limits<int>::max()));
+    for (int i = 0; i < Q; ++i) {
+        for (const auto &ev : sol.drone_queue[(size_t)i].events) {
+            if (ev.truck_id < 0 || ev.truck_id >= K) continue;
+            int pos = route_pos(sol, ev.truck_id, ev.rendezvous_customer);
+            if (pos < 0) continue;
+            first_pos[(size_t)i][(size_t)ev.truck_id] =
+                std::min(first_pos[(size_t)i][(size_t)ev.truck_id], pos);
+        }
+    }
+
+    std::vector<std::vector<int>> adj((size_t)Q);
+    std::vector<int> indeg((size_t)Q, 0);
+    for (int i = 0; i < Q; ++i) {
+        for (int j = i + 1; j < Q; ++j) {
+            bool i_before_j = false;
+            bool j_before_i = false;
+            for (int t = 0; t < K; ++t) {
+                int pi = first_pos[(size_t)i][(size_t)t];
+                int pj = first_pos[(size_t)j][(size_t)t];
+                if (pi == std::numeric_limits<int>::max() || pj == std::numeric_limits<int>::max()) continue;
+                if (pi < pj) i_before_j = true;
+                else if (pj < pi) j_before_i = true;
+            }
+            // Conflicting constraints across trucks => keep current order.
+            if (i_before_j && j_before_i) return false;
+            if (i_before_j) {
+                adj[(size_t)i].push_back(j);
+                indeg[(size_t)j]++;
+            } else if (j_before_i) {
+                adj[(size_t)j].push_back(i);
+                indeg[(size_t)i]++;
+            }
+        }
+    }
+
+    std::priority_queue<int, std::vector<int>, std::greater<int>> ready;
+    for (int i = 0; i < Q; ++i) if (indeg[(size_t)i] == 0) ready.push(i);
+
+    std::vector<int> order;
+    order.reserve((size_t)Q);
+    while (!ready.empty()) {
+        int u = ready.top(); ready.pop();
+        order.push_back(u);
+        for (int v : adj[(size_t)u]) {
+            indeg[(size_t)v]--;
+            if (indeg[(size_t)v] == 0) ready.push(v);
+        }
+    }
+    if ((int)order.size() != Q) return false; // cycle => keep current order
+
+    bool changed = false;
+    for (int i = 0; i < Q; ++i) {
+        if (order[(size_t)i] != i) { changed = true; break; }
+    }
+    if (!changed) return false;
+
+    std::vector<DroneTrip> newq;
+    newq.reserve(sol.drone_queue.size());
+    for (int idx : order) newq.push_back(sol.drone_queue[(size_t)idx]);
+    sol.drone_queue.swap(newq);
+    rebuild_loaded_from_drone_marks(p, sol);
+    return true;
 }
 
 static void print_truck_routes(const Solution &s) {
@@ -4772,19 +4846,59 @@ int main(int argc, char** argv){
     }
 
     if (!validate_only) {
+        auto init_repair_and_validate = [&](const char *stage) -> bool {
+            normalize_after_transform(p, sol);
+            bool reordered = reorder_drone_queue_truck_order_init_only(p, sol);
+            if (reordered) {
+                std::cout << "[INIT][REPAIR] reordered drone_queue at stage " << stage << "\n";
+            }
+            std::string why;
+            if (!validate_solution(p, sol, why)) {
+                std::cout << "[INIT][CHECK] invalid after stage " << stage << ": " << why << "\n";
+                return false;
+            }
+            auto fr = fitness_full(p, sol, nullptr);
+            if (!fr.first) {
+                std::cout << "[INIT][CHECK] fitness_full invalid after stage " << stage << "\n";
+                return false;
+            }
+            return true;
+        };
+
+        auto run_init_step_with_rollback = [&](const char *stage, const std::function<void()> &step) {
+            Solution backup = sol;
+            step();
+            if (!init_repair_and_validate(stage)) {
+                sol = std::move(backup);
+                std::cout << "[INIT][ROLLBACK] revert stage " << stage << "\n";
+                // Keep a normalized fallback state to avoid carrying stale marks.
+                normalize_after_transform(p, sol);
+                (void)reorder_drone_queue_truck_order_init_only(p, sol);
+            }
+        };
+
         const bool init_force_max_rel = env_bool("INIT_FORCE_MAX_RELEASE_RESUPPLY", true);
         if (init_force_max_rel) {
-            init_force_max_release_resupply(p, sol);
+            run_init_step_with_rollback("force_max_release", [&]() {
+                init_force_max_release_resupply(p, sol);
+            });
         } else {
             std::cout << "[INIT] INIT_FORCE_MAX_RELEASE_RESUPPLY disabled\n";
         }
         const double init_top_rel_ratio = env_double("INIT_TOP_RELEASE_RESUPPLY_RATIO", 0.10);
-        init_force_top_release_resupply(p, sol, init_top_rel_ratio);
+        run_init_step_with_rollback("force_top_release", [&]() {
+            init_force_top_release_resupply(p, sol, init_top_rel_ratio);
+        });
         const bool init_force_mv = env_bool("INIT_FORCE_MULTI_VISIT", true);
         if (init_force_mv) {
-            init_force_multi_visit(p, sol);
+            run_init_step_with_rollback("force_multi_visit", [&]() {
+                init_force_multi_visit(p, sol);
+            });
         } else {
             std::cout << "[INIT] INIT_FORCE_MULTI_VISIT disabled\n";
+        }
+        if (!init_repair_and_validate("final_init_state")) {
+            std::cout << "[INIT][WARN] final init state still invalid; keeping current state for downstream fail-fast\n";
         }
     }
 
