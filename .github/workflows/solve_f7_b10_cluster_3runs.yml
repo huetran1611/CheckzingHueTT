@@ -1,17 +1,13 @@
-name: Solve F7 B8 Cluster+Random (3 Runs)
+name: Solve F7 B10 Cluster (3 Runs)
 
 on:
   push:
   workflow_dispatch:
     inputs:
       cluster_dir:
-        description: "Cluster dataset dir (B8)"
+        description: "Cluster dataset dir (B10)"
         required: false
         default: "test_data/data_demand_random_50_batch_custom_cluster_all_flat"
-      random_dir:
-        description: "Random dataset dir (B8)"
-        required: false
-        default: "test_data/data_demand_random_50_batch_custom_random_all_flat"
       solver_time_limit_sec:
         description: "Per-run solver time limit (seconds)"
         required: false
@@ -35,14 +31,13 @@ jobs:
       - id: mk
         env:
           CLUSTER_DIR: ${{ github.event.inputs.cluster_dir || 'test_data/data_demand_random_50_batch_custom_cluster_all_flat' }}
-          RANDOM_DIR: ${{ github.event.inputs.random_dir || 'test_data/data_demand_random_50_batch_custom_random_all_flat' }}
         run: |
           python - << 'PY'
           import json, os, pathlib, re
 
           def collect(dat_dir: pathlib.Path, group: str):
               out = []
-              for p in sorted(dat_dir.glob("R101_*_B8_v*.dat")):
+              for p in sorted(dat_dir.glob("R101_*_B10_v*.dat")):
                   m = re.match(r"^R101_([0-9]+(?:\.[0-9]+)?)_B([0-9]+)_v([0-9]+)\.dat$", p.name)
                   beta = m.group(1) if m else ""
                   b = m.group(2) if m else ""
@@ -63,7 +58,6 @@ jobs:
 
           tasks = []
           tasks += collect(pathlib.Path(os.environ["CLUSTER_DIR"]), "cluster")
-          tasks += collect(pathlib.Path(os.environ["RANDOM_DIR"]), "random")
 
           with open("matrix.json", "w", encoding="utf-8") as f:
               json.dump(tasks, f)
@@ -451,7 +445,7 @@ jobs:
                   sol_dir / "best_no_resupply" / f"{rn}__{inst}.txt",
               )
 
-          out_csv = out_dir / "summary_f7_b8_cluster_random_3runs.csv"
+          out_csv = out_dir / "summary_f7_b10_cluster_3runs.csv"
           fields = [
               "run_name","instance","instance_name","group","beta","B","version","run_index",
               "A","L","n_truck","n_drone","solver_time_limit_sec","return_code",
@@ -504,7 +498,7 @@ jobs:
                   "avg_best_trip_count": avg_num(vals("best_trip_count")),
               })
 
-          out_avg = out_dir / "summary_f7_b8_cluster_random_3runs_avg_by_instance.csv"
+          out_avg = out_dir / "summary_f7_b10_cluster_3runs_avg_by_instance.csv"
           fields_avg = ["group","instance_name","beta","B","version","runs","avg_best_fitness","avg_best_mult_fitness","avg_best_single_fitness","avg_best_no_resupply_fitness","avg_best_multi_visit_trip_count","avg_best_trip_count"]
           with out_avg.open("w", newline="", encoding="utf-8") as f:
               w = csv.DictWriter(f, fieldnames=fields_avg, extrasaction="ignore")
@@ -528,10 +522,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: summary_f7_b8_cluster_random_3runs
+          name: summary_f7_b10_cluster_3runs
           path: |
-            results/summary_f7_b8_cluster_random_3runs.csv
-            results/summary_f7_b8_cluster_random_3runs_avg_by_instance.csv
+            results/summary_f7_b10_cluster_3runs.csv
+            results/summary_f7_b10_cluster_3runs_avg_by_instance.csv
             results/solutions/**
             downloaded/**
           if-no-files-found: warn
