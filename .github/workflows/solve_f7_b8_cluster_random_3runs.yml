@@ -254,18 +254,22 @@ jobs:
           best_path = clean_path(first_text(r"\[SOL\] best solution file:\s*(.+)"))
           best_multi_path = clean_path(first_text(r"\[SOL\] best multi-visit solution file:\s*(.+)"))
           best_single_path = clean_path(first_text(r"\[SOL\] best single-visit solution file:\s*(.+)"))
+          best_no_resupply_path = clean_path(first_text(r"\[SOL\] best no-resupply solution file:\s*(.+)"))
 
           best_fitness = first_float(r"Makespan:\s*([0-9]+(?:\.[0-9]+)?)")
           best_multi_fitness = first_float(r"\[SOL\] best multi-visit makespan:\s*([0-9]+(?:\.[0-9]+)?)")
           best_single_fitness = first_float(r"\[SOL\] best single-visit makespan:\s*([0-9]+(?:\.[0-9]+)?)")
+          best_no_resupply_fitness = first_float(r"\[SOL\] best no-resupply makespan:\s*([0-9]+(?:\.[0-9]+)?)")
 
           best_text = read_solution_text(best_path)
           best_multi_text = read_solution_text(best_multi_path)
           best_single_text = read_solution_text(best_single_path)
+          best_no_resupply_text = read_solution_text(best_no_resupply_path)
 
           best_valid = validate_solution_file(best_path) if best_path else False
           best_multi_valid = validate_solution_file(best_multi_path) if best_multi_path else False
           best_single_valid = validate_solution_file(best_single_path) if best_single_path else False
+          best_no_resupply_valid = validate_solution_file(best_no_resupply_path) if best_no_resupply_path else False
 
           if not best_valid:
               best_path = ""
@@ -279,15 +283,21 @@ jobs:
               best_single_path = ""
               best_single_text = ""
               best_single_fitness = None
+          if not best_no_resupply_valid:
+              best_no_resupply_path = ""
+              best_no_resupply_text = ""
+              best_no_resupply_fitness = None
 
           sigma, coords = parse_dat_meta(dat_path)
           best_m = metrics_from_solution(parse_solution(best_text), sigma, coords)
           best_multi_m = metrics_from_solution(parse_solution(best_multi_text), sigma, coords)
           best_single_m = metrics_from_solution(parse_solution(best_single_text), sigma, coords)
+          best_no_resupply_m = metrics_from_solution(parse_solution(best_no_resupply_text), sigma, coords)
 
           (out_dir / "best_solution.txt").write_text(best_text, encoding="utf-8")
           (out_dir / "best_multi_visit_solution.txt").write_text(best_multi_text, encoding="utf-8")
           (out_dir / "best_single_visit_solution.txt").write_text(best_single_text, encoding="utf-8")
+          (out_dir / "best_no_resupply_solution.txt").write_text(best_no_resupply_text, encoding="utf-8")
 
           rp = resolve_path(best_path)
           if rp is not None: shutil.copy2(rp, out_dir / "raw_best_solution.txt")
@@ -295,6 +305,8 @@ jobs:
           if rp is not None: shutil.copy2(rp, out_dir / "raw_best_multi_visit_solution.txt")
           rp = resolve_path(best_single_path)
           if rp is not None: shutil.copy2(rp, out_dir / "raw_best_single_visit_solution.txt")
+          rp = resolve_path(best_no_resupply_path)
+          if rp is not None: shutil.copy2(rp, out_dir / "raw_best_no_resupply_solution.txt")
 
           meta = {
               "run_name": run_name,
@@ -315,12 +327,15 @@ jobs:
               "best_multi_fitness": best_multi_fitness,
               "best_mult_fitness": best_multi_fitness,
               "best_single_fitness": best_single_fitness,
+              "best_no_resupply_fitness": best_no_resupply_fitness,
               "best_solution_file": best_path,
               "best_multi_solution_file": best_multi_path,
               "best_single_solution_file": best_single_path,
+              "best_no_resupply_solution_file": best_no_resupply_path,
               "best_solution_valid": best_valid,
               "best_multi_solution_valid": best_multi_valid,
               "best_single_solution_valid": best_single_valid,
+              "best_no_resupply_solution_valid": best_no_resupply_valid,
               "best_trip_count": best_m.get("trip_count"),
               "best_multi_visit_trip_count": best_m.get("multi_visit_trip_count"),
               "best_avg_customers_per_trip": best_m.get("avg_customers_per_trip"),
@@ -333,6 +348,10 @@ jobs:
               "best_single_multi_visit_trip_count": best_single_m.get("multi_visit_trip_count"),
               "best_single_avg_customers_per_trip": best_single_m.get("avg_customers_per_trip"),
               "best_single_avg_drone_trip_time": best_single_m.get("avg_drone_trip_time"),
+              "best_no_resupply_trip_count": best_no_resupply_m.get("trip_count"),
+              "best_no_resupply_multi_visit_trip_count": best_no_resupply_m.get("multi_visit_trip_count"),
+              "best_no_resupply_avg_customers_per_trip": best_no_resupply_m.get("avg_customers_per_trip"),
+              "best_no_resupply_avg_drone_trip_time": best_no_resupply_m.get("avg_drone_trip_time"),
               "log_file": str(log_path),
           }
           (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -357,12 +376,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: run_*
           path: downloaded
           merge-multiple: false
+          if-no-artifact-found: warn
 
       - name: Build summary CSVs
+        if: always()
         run: |
           python - << 'PY'
           import csv, json, pathlib
@@ -381,12 +403,13 @@ jobs:
           fields = [
               "run_name","instance","instance_name","group","beta","B","version","run_index",
               "A","L","n_truck","n_drone","solver_time_limit_sec","return_code",
-              "best_fitness","best_multi_fitness","best_mult_fitness","best_single_fitness",
-              "best_solution_file","best_multi_solution_file","best_single_solution_file",
-              "best_solution_valid","best_multi_solution_valid","best_single_solution_valid",
+              "best_fitness","best_multi_fitness","best_mult_fitness","best_single_fitness","best_no_resupply_fitness",
+              "best_solution_file","best_multi_solution_file","best_single_solution_file","best_no_resupply_solution_file",
+              "best_solution_valid","best_multi_solution_valid","best_single_solution_valid","best_no_resupply_solution_valid",
               "best_trip_count","best_multi_visit_trip_count","best_avg_customers_per_trip","best_avg_drone_trip_time",
               "best_multi_trip_count","best_multi_multi_visit_trip_count","best_multi_avg_customers_per_trip","best_multi_avg_drone_trip_time",
               "best_single_trip_count","best_single_multi_visit_trip_count","best_single_avg_customers_per_trip","best_single_avg_drone_trip_time",
+              "best_no_resupply_trip_count","best_no_resupply_multi_visit_trip_count","best_no_resupply_avg_customers_per_trip","best_no_resupply_avg_drone_trip_time",
               "log_file"
           ]
           with out_csv.open("w", newline="", encoding="utf-8") as f:
@@ -422,22 +445,33 @@ jobs:
                   "avg_best_fitness": avg_num(vals("best_fitness")),
                   "avg_best_mult_fitness": avg_num(vals("best_mult_fitness")),
                   "avg_best_single_fitness": avg_num(vals("best_single_fitness")),
+                  "avg_best_no_resupply_fitness": avg_num(vals("best_no_resupply_fitness")),
                   "avg_best_multi_visit_trip_count": avg_num(vals("best_multi_visit_trip_count")),
                   "avg_best_trip_count": avg_num(vals("best_trip_count")),
               })
 
           out_avg = out_dir / "summary_f7_b8_cluster_random_3runs_avg_by_instance.csv"
-          fields_avg = ["group","instance_name","beta","B","version","runs","avg_best_fitness","avg_best_mult_fitness","avg_best_single_fitness","avg_best_multi_visit_trip_count","avg_best_trip_count"]
+          fields_avg = ["group","instance_name","beta","B","version","runs","avg_best_fitness","avg_best_mult_fitness","avg_best_single_fitness","avg_best_no_resupply_fitness","avg_best_multi_visit_trip_count","avg_best_trip_count"]
           with out_avg.open("w", newline="", encoding="utf-8") as f:
               w = csv.DictWriter(f, fieldnames=fields_avg, extrasaction="ignore")
               w.writeheader()
               w.writerows(avg_rows)
 
+          fail_count = 0
+          for r in rows:
+              try:
+                  if int(r.get("return_code", 0)) != 0:
+                      fail_count += 1
+              except Exception:
+                  pass
+
           print(f"Wrote {len(rows)} rows to {out_csv}")
           print(f"Wrote {len(avg_rows)} rows to {out_avg}")
+          print(f"Runs with non-zero return_code: {fail_count}")
           PY
 
       - name: Upload aggregate artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: summary_f7_b8_cluster_random_3runs

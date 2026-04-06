@@ -29,6 +29,8 @@ static bool g_has_best_multi_solution = false;
 static Solution g_best_multi_solution;
 static bool g_has_best_single_solution = false;
 static Solution g_best_single_solution;
+static bool g_has_best_no_resupply_solution = false;
+static Solution g_best_no_resupply_solution;
 
 static inline double elapsed_solver_seconds() {
     using namespace std::chrono;
@@ -1154,6 +1156,10 @@ static bool is_single_visit_with_drone_trip(const Solution &s) {
     return (!has_multi_visit(s)) && (!s.drone_queue.empty());
 }
 
+static bool is_no_resupply_solution(const Solution &s) {
+    return s.drone_queue.empty();
+}
+
 static void update_best_single_solution_if_better(const Params &p, const Solution &cand) {
     if (!is_single_visit_with_drone_trip(cand)) return;
     if (!g_has_best_single_solution) {
@@ -1181,6 +1187,36 @@ static void update_best_single_solution_if_better(const Params &p, const Solutio
     if (better_overall(rc.second, trip_cur, mv_cur, w_cur.first, w_cur.second, ts_cur,
                        rb.second, trip_best, mv_best, w_best.first, w_best.second, ts_best)) {
         g_best_single_solution = cand;
+    }
+}
+
+static void update_best_no_resupply_solution_if_better(const Params &p, const Solution &cand) {
+    if (!is_no_resupply_solution(cand)) return;
+    if (!g_has_best_no_resupply_solution) {
+        g_has_best_no_resupply_solution = true;
+        g_best_no_resupply_solution = cand;
+        return;
+    }
+    double ts_best = 0.0;
+    auto rb = fitness_full(p, g_best_no_resupply_solution, &ts_best);
+    double ts_cur = 0.0;
+    auto rc = fitness_full(p, cand, &ts_cur);
+    if (!rc.first) return;
+    if (!rb.first) {
+        g_best_no_resupply_solution = cand;
+        return;
+    }
+    int mv_best = multi_visit_trip_count(g_best_no_resupply_solution);
+    int trip_best = (int)g_best_no_resupply_solution.drone_queue.size();
+    auto w_best = drone_wait_metrics(p, g_best_no_resupply_solution);
+
+    int mv_cur = multi_visit_trip_count(cand);
+    int trip_cur = (int)cand.drone_queue.size();
+    auto w_cur = drone_wait_metrics(p, cand);
+
+    if (better_overall(rc.second, trip_cur, mv_cur, w_cur.first, w_cur.second, ts_cur,
+                       rb.second, trip_best, mv_best, w_best.first, w_best.second, ts_best)) {
+        g_best_no_resupply_solution = cand;
     }
 }
 
@@ -4761,6 +4797,132 @@ static bool init_force_multi_visit(const Params &p, Solution &sol) {
     return false;
 }
 
+// Fallback policy when init cannot create a multi-visit solution:
+// 1) Try to resupply all customers having global maximum release date.
+// 2) Use singleton drone trips only (each trip serves exactly one customer/package).
+// 3) If infeasible, return false so caller can fallback to pure depot loading.
+static bool init_fallback_max_release_singleton_resupply(const Params &p, Solution &sol) {
+    const int n = (int)p.customers.size();
+    const int K = (int)sol.trucks.size();
+    if (n <= 1 || K <= 0) return false;
+
+    int max_rel = std::numeric_limits<int>::min();
+    for (int c = 1; c < n; ++c) max_rel = std::max(max_rel, p.customers[c].release);
+    if (max_rel <= 0) return false;
+
+    std::vector<int> owner_truck(n, -1), owner_pos(n, -1);
+    for (int t = 0; t < K; ++t) {
+        for (size_t pos = 0; pos < sol.trucks[(size_t)t].stops.size(); ++pos) {
+            int c = sol.trucks[(size_t)t].stops[pos].customer;
+            if (c > 0 && c < n) {
+                owner_truck[c] = t;
+                owner_pos[c] = (int)pos;
+            }
+        }
+    }
+
+    std::vector<int> targets;
+    for (int c = 1; c < n; ++c) {
+        if (p.customers[c].release != max_rel) continue;
+        if (owner_truck[c] < 0 || owner_truck[c] >= K) continue;
+        if (owner_pos[c] <= 0) continue;
+        if ((double)p.customers[c].demand > p.M_d + 1e-9) continue;
+        targets.push_back(c);
+    }
+    if (targets.empty()) return false;
+
+    std::sort(targets.begin(), targets.end(), [&](int a, int b) {
+        if (owner_truck[a] != owner_truck[b]) return owner_truck[a] < owner_truck[b];
+        if (owner_pos[a] != owner_pos[b]) return owner_pos[a] < owner_pos[b];
+        return a < b;
+    });
+
+    std::vector<char> is_target(n, 0);
+    for (int c : targets) is_target[c] = 1;
+    for (auto &trip : sol.drone_queue) {
+        for (auto &ev : trip.events) {
+            std::vector<int> kept;
+            kept.reserve(ev.packages.size());
+            for (int x : ev.packages) {
+                if (x > 0 && x < n && is_target[x]) continue;
+                kept.push_back(x);
+            }
+            ev.packages.swap(kept);
+        }
+        std::vector<ResupplyEvent> kept_ev;
+        kept_ev.reserve(trip.events.size());
+        for (auto &ev : trip.events) if (!ev.packages.empty()) kept_ev.push_back(std::move(ev));
+        trip.events.swap(kept_ev);
+    }
+    {
+        std::vector<DroneTrip> kept_trips;
+        kept_trips.reserve(sol.drone_queue.size());
+        for (auto &trip : sol.drone_queue) if (!trip.events.empty()) kept_trips.push_back(std::move(trip));
+        sol.drone_queue.swap(kept_trips);
+    }
+
+    auto city_reachable = [&](int city) -> bool {
+        if (city <= 0 || city >= n) return false;
+        if (!p.reachable_mask.empty() && !p.reachable_mask[city]) return false;
+        return true;
+    };
+
+    auto all_targets_resupplied = [&](const Solution &s) -> bool {
+        std::vector<char> is_resup(n, 0);
+        for (const auto &trip : s.drone_queue)
+            for (const auto &ev : trip.events)
+                for (int x : ev.packages)
+                    if (x > 0 && x < n) is_resup[x] = 1;
+        for (int c : targets) if (!is_resup[c]) return false;
+        return true;
+    };
+
+    auto try_build_singletons = [&](bool reverse_order) -> bool {
+        Solution trial = sol;
+        std::vector<int> ord = targets;
+        if (reverse_order) std::reverse(ord.begin(), ord.end());
+
+        for (int c : ord) {
+            int t = owner_truck[c];
+            if (t < 0 || t >= K) return false;
+            if (!city_reachable(c)) return false; // singleton trip must rendezvous at customer
+
+            DroneTrip trip;
+            trip.events.push_back(ResupplyEvent{c, t, {c}});
+
+            int ins = find_insert_pos_queue(p, trial, trip);
+            if (ins < 0) return false;
+            trial.drone_queue.insert(trial.drone_queue.begin() + ins, trip);
+            if (!trip_endurance_optimistic(p, trial, trial.drone_queue[(size_t)ins])) return false;
+            std::string reason;
+            if (!validate_solution(p, trial, reason)) return false;
+        }
+
+        normalize_after_transform(p, trial);
+        std::string why;
+        if (!validate_solution(p, trial, why)) return false;
+        if (!all_targets_resupplied(trial)) return false;
+
+        sol = std::move(trial);
+        return true;
+    };
+
+    bool ok = try_build_singletons(false);
+    if (!ok) ok = try_build_singletons(true); // second attempt
+    if (!ok) return false;
+
+    std::cout << "[INIT] fallback max-release singleton trips target " << (int)targets.size()
+              << " realized " << (int)targets.size() << "\n";
+    return true;
+}
+
+static void init_force_all_depot_pickup(const Params &p, Solution &sol, const std::string &label) {
+    (void)p;
+    sol.drone_queue.clear();
+    normalize_after_transform(p, sol);
+    std::cout << "[INIT] fallback " << label << " => all customers served from depot\n";
+}
+
 int main(int argc, char** argv){
     try {
         g_solve_start = std::chrono::steady_clock::now();
@@ -4895,6 +5057,13 @@ int main(int argc, char** argv){
             run_init_step_with_rollback("force_multi_visit", [&]() {
                 init_force_multi_visit(p, sol);
             });
+            if (!has_multi_visit(sol)) {
+                run_init_step_with_rollback("fallback_max_release_singleton", [&]() {
+                    if (!init_fallback_max_release_singleton_resupply(p, sol)) {
+                        init_force_all_depot_pickup(p, sol, "max_release_singleton_failed");
+                    }
+                });
+            }
         } else {
             std::cout << "[INIT] INIT_FORCE_MULTI_VISIT disabled\n";
         }
@@ -4994,15 +5163,30 @@ int main(int argc, char** argv){
     }
     // Enforce a valid starting point before exploration stages.
     {
+        normalize_after_transform(p, sol);
+        bool reordered_pre_ats = reorder_drone_queue_truck_order_init_only(p, sol);
+        if (reordered_pre_ats) {
+            std::cout << "[PRE-ATS][REPAIR] reordered drone_queue to satisfy truck order\n";
+        }
         std::string why0;
         if (!validate_solution(p, sol, why0)) {
             std::cout << "[SOL] initial solution invalid before ATS/LS: " << why0 << "\n";
-            return 2;
+            init_force_all_depot_pickup(p, sol, "pre_ats_invalid");
+            std::string why1;
+            if (!validate_solution(p, sol, why1)) {
+                std::cout << "[SOL] all-depot recovery failed before ATS/LS: " << why1 << "\n";
+                return 2;
+            }
         }
         auto f0 = fitness_full(p, sol, nullptr);
         if (!f0.first) {
             std::cout << "[SOL] initial solution invalid (fitness_full) before ATS/LS\n";
-            return 2;
+            init_force_all_depot_pickup(p, sol, "pre_ats_fitness_invalid");
+            auto f1 = fitness_full(p, sol, nullptr);
+            if (!f1.first) {
+                std::cout << "[SOL] all-depot recovery fitness still invalid before ATS/LS\n";
+                return 2;
+            }
         }
     }
 
@@ -5026,7 +5210,9 @@ int main(int argc, char** argv){
                     auto fchk = fitness_full(p, sol, nullptr);
                     if (!fchk.first) {
                         std::cout << "[LS] skip: current solution invalid before LS\n";
-                        return 2;
+                        init_force_all_depot_pickup(p, sol, "pre_ls_invalid");
+                        auto fchk2 = fitness_full(p, sol, nullptr);
+                        if (!fchk2.first) return 2;
                     }
                 }
 			    double base_fit = fitness_full(p, sol).second;
@@ -5070,6 +5256,7 @@ int main(int argc, char** argv){
 		    // Also track best multi-visit encountered, even if subsequent makespan-improving moves remove it.
 		    update_best_multi_solution_if_better(p, sol);
             update_best_single_solution_if_better(p, sol);
+            update_best_no_resupply_solution_if_better(p, sol);
 
 		    const bool shake_on_stag = env_bool("LS_SHAKE_ON_STAGNATION", false);
 		    // Default very large so "run for 10 minutes" won't stop early unless user caps it.
@@ -5162,6 +5349,7 @@ int main(int argc, char** argv){
 		                    update_best_seen(sol);
 		                    update_best_multi_solution_if_better(p, sol);
                             update_best_single_solution_if_better(p, sol);
+                            update_best_no_resupply_solution_if_better(p, sol);
 		                }
 		            }
 		            if (stop_ls) break;
@@ -5212,6 +5400,7 @@ int main(int argc, char** argv){
 	    // Track best single/multi encountered during exploration using validated update paths only.
         update_best_multi_solution_if_better(p, sol);
         update_best_single_solution_if_better(p, sol);
+        update_best_no_resupply_solution_if_better(p, sol);
 
 	    std::cout << "[SOL] best solution detail:\n";
 	    print_solution_compact(std::cout, sol, p);
@@ -5265,6 +5454,23 @@ int main(int argc, char** argv){
             }
         } else {
             std::cout << "[SOL] best single-visit solution file: (not found)\n";
+        }
+
+        if (g_has_best_no_resupply_solution && solution_is_valid(g_best_no_resupply_solution)) {
+            std::cout.setf(std::ios::fixed);
+            std::cout << std::setprecision(12);
+            auto fn = fitness_full(p, g_best_no_resupply_solution, nullptr);
+            std::cout << "[SOL] best no-resupply makespan: " << fn.second << "\n";
+            std::cout << "[SOL] best no-resupply solution detail:\n";
+            print_solution_compact(std::cout, g_best_no_resupply_solution, p);
+            std::string best_no_resupply_path = write_solution_json(g_best_no_resupply_solution, p, "best_no_resupply");
+            if (!best_no_resupply_path.empty()) {
+                std::cout << "[SOL] best no-resupply solution file: " << best_no_resupply_path << "\n";
+            } else {
+                std::cout << "[SOL] best no-resupply solution file: (write failed)\n";
+            }
+        } else {
+            std::cout << "[SOL] best no-resupply solution file: (not found)\n";
         }
 
     if (g_prof.enabled) {
